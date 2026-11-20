@@ -1,0 +1,15 @@
+{
+  "name": "ae-client-dashboard",
+  "version": "0.1.0",
+  "description": "AE Client Dashboard MVP: login, service cards, activity feed, and a REST API for AE agents.",
+  "private": true,
+  "license": "UNLICENSED",
+  "main": "server.js",
+  "engines": { "node": ">=22.13" },
+  "scripts": {
+    "start": "node server.js",
+    "seed": "node scripts/seed.js",
+    "manage": "node scripts/manage.js",
+    "test": "node --test tests/smoke.test.js"
+  }
+}
