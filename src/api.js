@@ -97,10 +97,12 @@ function ingestTelnyx(key, input) {
 
 /**
  * One-time admin bootstrap. Creates AE Software Solutions LLC as a client
- * (if it does not exist), ensures a Front Desk subscription, and creates one
- * API key labelled "front-desk webhook". Returns the client id and the key
- * ONCE (only the hash is stored). Idempotent: a second call while a live key
- * already exists returns 409 instead of creating a duplicate.
+ * (if it does not exist), ensures a Front Desk subscription, creates a client
+ * login for Anthony (if one does not exist), and creates one API key labelled
+ * "front-desk webhook" (if one does not already exist). Returns the client id,
+ * the API key ONCE when newly created, and a temporary login password ONCE
+ * when a new user was just created (only hashes are stored). Fully idempotent:
+ * repeat calls return the existing ids and create nothing new.
  * Gated by the BOOTSTRAP_SECRET env var (config.bootstrapSecret). The route
  * is 404 when no secret is configured. Remove/rotate the secret after use.
  */
@@ -130,14 +132,37 @@ async function handleBootstrap(req, res, ip) {
     if (!store.hasSubscription(clientId, 'front-desk')) {
       store.addSubscription({ clientId, service: 'front-desk', plan: 'Front Desk 99', priceCents: 9900, billing: 'monthly' });
     }
-    const existing = db.prepare("SELECT id FROM api_keys WHERE client_id = ? AND label = ? AND revoked_at IS NULL").get(clientId, 'front-desk webhook');
-    if (existing) {
-      logAccess(null, req, '/api/v1/admin/bootstrap', 409);
-      return h.json(res, 409, { error: 'An active front-desk webhook key already exists for this client', client_id: clientId, key_id: existing.id });
+    // Client login for Anthony (role client, so he sees AE's own dashboard).
+    let tempPassword = null;
+    let userCreated = false;
+    const userRow = db.prepare('SELECT id FROM users WHERE email = ?').get(AE_EMAIL);
+    if (!userRow) {
+      tempPassword = sec.newToken(12);
+      await store.createUser({ clientId, email: AE_EMAIL, password: tempPassword, role: 'client' });
+      userCreated = true;
     }
-    const { id: keyId, key } = store.createApiKey({ clientId, label: 'front-desk webhook' });
+    const existing = db.prepare("SELECT id FROM api_keys WHERE client_id = ? AND label = ? AND revoked_at IS NULL").get(clientId, 'front-desk webhook');
+    let apiKey = null;
+    let keyId = existing ? existing.id : null;
+    let keyNote = null;
+    if (!existing) {
+      const created = store.createApiKey({ clientId, label: 'front-desk webhook' });
+      apiKey = created.key;
+      keyId = created.id;
+    } else {
+      keyNote = 'An active front-desk webhook key already exists for this client';
+    }
     logAccess(null, req, '/api/v1/admin/bootstrap', 200);
-    return h.json(res, 200, { ok: true, client_id: clientId, api_key: key, key_id: keyId });
+    return h.json(res, 200, {
+      ok: true,
+      client_id: clientId,
+      api_key: apiKey,
+      key_id: keyId,
+      key_note: keyNote,
+      user_created: userCreated,
+      user_email: AE_EMAIL,
+      temp_password: tempPassword,
+    });
   } catch (err) {
     console.error('[api] bootstrap error:', err);
     logAccess(null, req, '/api/v1/admin/bootstrap', 500);
