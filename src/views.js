@@ -1,5 +1,6 @@
 'use strict';
 // Server-rendered HTML pages. Everything user-supplied goes through esc().
+const { LOGO_MARK, FAVICON_16, FAVICON_32, APPLE_TOUCH } = require('./brand');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 function layout(title, body, { script } = {}) {
@@ -10,6 +11,9 @@ function layout(title, body, { script } = {}) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>${esc(title)} · AE Client Dashboard</title>
+<link rel="icon" type="image/png" sizes="32x32" href="${FAVICON_32}">
+<link rel="icon" type="image/png" sizes="16x16" href="${FAVICON_16}">
+<link rel="apple-touch-icon" href="${APPLE_TOUCH}">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -24,6 +28,7 @@ const csrfField = (t) => `<input type="hidden" name="_csrf" value="${esc(t)}">`;
 /** Centered glass card used by login / reset pages. */
 function authPage(title, inner) {
   return layout(title, `<main class="auth"><div class="glass auth__card">
+<img src="${LOGO_MARK}" alt="AE Software Solutions" class="brand__logo" width="48" height="48">
 <p class="brand">AE Software Solutions</p>
 <h1>${esc(title)}</h1>
 ${inner}
@@ -75,7 +80,7 @@ function messagePage(title, text) {
 /** Header with sign-out (spec 3: log out on every page). */
 function header(name, csrf) {
   return `<header class="topbar">
-  <div><span class="brand">AE Software Solutions</span><span class="topbar__name">${esc(name)}</span></div>
+  <div class="topbar__brand"><img src="${LOGO_MARK}" alt="AE Software Solutions" class="topbar__logo" width="30" height="30"><span class="brand">AE Software Solutions</span><span class="topbar__name">${esc(name)}</span></div>
   <form method="post" action="/logout">${csrfField(csrf)}<button class="btn btn--ghost" type="submit">Sign out</button></form>
 </header>`;
 }

@@ -26,6 +26,11 @@ code { background: var(--glass-strong); padding: 0.1em 0.4em; border-radius: 6px
 .muted { color: var(--muted); }
 .small { font-size: 0.85rem; }
 .brand { font-size: 0.78rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin: 0; }
+/* AE logo mark on auth pages (login / reset / forgot). */
+.brand__logo { display: block; width: 48px; height: 48px; margin-bottom: 0.9rem; }
+/* AE logo mark in the dashboard topbar. */
+.topbar__brand { display: flex; align-items: center; gap: 0.6rem; }
+.topbar__logo { width: 30px; height: 30px; flex: none; }
 
 .glass {
   background: var(--glass); border: 1px solid var(--line); border-radius: var(--radius);
