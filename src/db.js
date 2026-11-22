@@ -31,7 +31,19 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,                        -- scrypt, never plain text
   role          TEXT NOT NULL CHECK (role IN ('client','admin')),
   created_at    TEXT NOT NULL,
-  last_login_at TEXT
+  last_login_at TEXT,
+  password_set_at     TEXT,                           -- when the current password was set; NULL = unknown (backfilled from created_at)
+  must_reset_password INTEGER NOT NULL DEFAULT 0      -- 1 while a temporary password is still in use
+);
+
+-- New-member onboarding: tracks the set-password email + reminder sequence
+-- for users created with a temporary password.
+CREATE TABLE IF NOT EXISTS password_onboarding (
+  user_id         TEXT PRIMARY KEY REFERENCES users(id),
+  temp_created_at TEXT NOT NULL,                      -- when the temp password was issued
+  last_reminder_at TEXT,                             -- when the last reminder email was sent
+  reminder_count  INTEGER NOT NULL DEFAULT 0,
+  completed_at    TEXT                               -- when the user set a real password
 );
 
 CREATE TABLE IF NOT EXISTS subscriptions (
@@ -122,6 +134,17 @@ CREATE TABLE IF NOT EXISTS api_access_log (
   at        TEXT NOT NULL
 );
 `);
+
+// ---- Migrations for databases created before a schema change ----------------
+// Adds password_set_at / must_reset_password to users when the table predates
+// them, and backfills password_set_at from created_at so existing passwords
+// get a 1-year expiry from when the account was created.
+{
+  const cols = new Set(db.prepare('PRAGMA table_info(users)').all().map((c) => c.name));
+  if (!cols.has('password_set_at')) db.exec('ALTER TABLE users ADD COLUMN password_set_at TEXT');
+  if (!cols.has('must_reset_password')) db.exec("ALTER TABLE users ADD COLUMN must_reset_password INTEGER NOT NULL DEFAULT 0");
+  db.prepare('UPDATE users SET password_set_at = created_at WHERE password_set_at IS NULL').run();
+}
 
 /** Run fn inside a transaction; roll back if it throws. */
 function tx(fn) {

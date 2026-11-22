@@ -15,12 +15,52 @@ function createClient({ businessName, contactName, email, phone }) {
   return id;
 }
 
-async function createUser({ clientId, email, password, role }) {
+async function createUser({ clientId, email, password, role, tempPassword = false }) {
   const id = newId('usr');
   const hash = await hashPassword(password);
-  db.prepare('INSERT INTO users (id, client_id, email, password_hash, role, created_at) VALUES (?,?,?,?,?,?)')
-    .run(id, clientId || null, email, hash, role, nowIso());
+  const t = nowIso();
+  tx(() => {
+    db.prepare('INSERT INTO users (id, client_id, email, password_hash, role, created_at, password_set_at, must_reset_password) VALUES (?,?,?,?,?,?,?,?)')
+      .run(id, clientId || null, email, hash, role, t, t, tempPassword ? 1 : 0);
+    if (tempPassword) {
+      db.prepare('INSERT INTO password_onboarding (user_id, temp_created_at, reminder_count) VALUES (?,?,0)')
+        .run(id, t);
+    }
+  });
   return id;
+}
+
+/** Sets a new password (reset flow or admin change). Restarts the 1-year expiry and clears the temp-password flag. */
+async function setPassword(userId, password) {
+  const hash = await hashPassword(password);
+  const t = nowIso();
+  tx(() => {
+    db.prepare('UPDATE users SET password_hash=?, password_set_at=?, must_reset_password=0 WHERE id=?')
+      .run(hash, t, userId);
+    db.prepare('UPDATE password_onboarding SET completed_at=? WHERE user_id=? AND completed_at IS NULL')
+      .run(t, userId);
+  });
+}
+
+/** True when the user's current password is older than the 1-year expiry. */
+function passwordExpired(user) {
+  if (!user.password_set_at) return false; // unknown set time: do not lock anyone out
+  const ageMs = Date.now() - new Date(user.password_set_at).getTime();
+  return ageMs > config.passwordExpiryDays * 86_400_000;
+}
+
+/** Users still on a temporary password, with their onboarding state, for the reminder job. */
+function listOnboardingPending() {
+  return db.prepare(`
+    SELECT u.id, u.email, u.client_id, o.temp_created_at, o.last_reminder_at, o.reminder_count
+    FROM users u JOIN password_onboarding o ON o.user_id = u.id
+    WHERE u.must_reset_password = 1 AND o.completed_at IS NULL`).all();
+}
+
+function recordOnboardingReminder(userId) {
+  const t = nowIso();
+  db.prepare('UPDATE password_onboarding SET last_reminder_at=?, reminder_count=reminder_count+1 WHERE user_id=?')
+    .run(t, userId);
 }
 
 function addSubscription({ clientId, service, plan, priceCents, billing }) {
@@ -149,6 +189,7 @@ const hasSubscription = (clientId, service) =>
   !!db.prepare('SELECT 1 FROM subscriptions WHERE client_id=? AND service=?').get(clientId, service);
 
 module.exports = {
-  createClient, createUser, addSubscription, setServiceStatus, createApiKey, revokeApiKey,
+  createClient, createUser, setPassword, passwordExpired, listOnboardingPending, recordOnboardingReminder,
+  addSubscription, setServiceStatus, createApiKey, revokeApiKey,
   addEvent, listServiceCards, listActivity, hasSubscription, nowIso,
 };

@@ -6,6 +6,7 @@ const crypto = require('node:crypto');
 const store = require('../src/store');
 const { db } = require('../src/db');
 const { SERVICES } = require('../src/services');
+const { sendPasswordResetEmail, runReminders } = require('../src/onboarding');
 
 const [cmd, ...rest] = process.argv.slice(2);
 const args = {};
@@ -18,15 +19,32 @@ const commands = {
   async 'create-client'() {
     need('business', 'email');
     const clientId = store.createClient({ businessName: args.business, contactName: args.contact, email: args.email, phone: args.phone });
+    const isTemp = !args.password;
     const password = args.password || tempPassword();
-    await store.createUser({ clientId, email: args.email, password, role: 'client' });
-    console.log(`Client ID: ${clientId}\nLogin email: ${args.email}\nTemporary password: ${password}\n(Shown once. Ask the client to use "Forgot your password?" to choose their own.)`);
+    const userId = await store.createUser({ clientId, email: args.email, password, role: 'client', tempPassword: isTemp });
+    let emailed = false;
+    if (isTemp) {
+      // New-member onboarding: email the set-password link (7-day link, reminders day 3 + 6).
+      emailed = await sendPasswordResetEmail({ id: userId, email: args.email }, { reason: 'welcome' }).catch(() => false);
+    }
+    console.log(`Client ID: ${clientId}\nLogin email: ${args.email}\nTemporary password: ${password}\n(Shown once. ${emailed ? 'A set-password email was sent.' : 'No set-password email was sent (mail not configured); ask the client to use "Forgot your password?" to choose their own.'})`);
   },
   async 'create-admin'() {
     need('email');
+    const isTemp = !args.password;
     const password = args.password || tempPassword();
-    await store.createUser({ clientId: null, email: args.email, password, role: 'admin' });
-    console.log(`Admin created: ${args.email}\nTemporary password: ${password}`);
+    const userId = await store.createUser({ clientId: null, email: args.email, password, role: 'admin', tempPassword: isTemp });
+    let emailed = false;
+    if (isTemp) {
+      emailed = await sendPasswordResetEmail({ id: userId, email: args.email }, { reason: 'welcome' }).catch(() => false);
+    }
+    console.log(`Admin created: ${args.email}\nTemporary password: ${password}${emailed ? '\nA set-password email was sent.' : ''}`);
+  },
+  async 'send-reminders'() {
+    // Daily job: day-3 and day-6 set-password reminders for members still on a temp password.
+    const result = await runReminders();
+    console.log(JSON.stringify(result));
+    if (result.errors.length) process.exit(1);
   },
   'add-subscription'() {
     need('client', 'service');
@@ -64,6 +82,7 @@ const commands = {
   create-key --client ID --label "front-desk webhook"
   revoke-key --id KEY_ID
   list-clients
+  send-reminders  (daily job: day-3 and day-6 set-password reminders for members still on a temp password)
 Service slugs: ${SERVICES.map((s) => s.slug).join(', ')}`);
   },
 };

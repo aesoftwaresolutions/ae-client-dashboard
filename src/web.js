@@ -65,10 +65,19 @@ async function handleWeb(req, res, url) {
       const b = loginEmailLimiter.hit(email);
       if (!a.ok || !b.ok) return tooMany(res, Math.max(a.retryAfter || 0, b.retryAfter || 0));
 
-      const user = db.prepare('SELECT id, password_hash FROM users WHERE email = ?').get(email);
+      const user = db.prepare('SELECT id, password_hash, password_set_at, must_reset_password FROM users WHERE email = ?').get(email);
       // Same work and same message whether or not the email exists.
       const ok = user ? await sec.verifyPassword(password, user.password_hash) : (await sec.burnPasswordTime(password), false);
       if (!ok) return h.html(res, 401, views.loginPage({ csrf, error: 'That email and password do not match.', email }));
+
+      // A password older than the 1-year expiry cannot sign in: send a fresh reset link.
+      if (user && store.passwordExpired(user)) {
+        const { sendPasswordResetEmail } = require('./onboarding');
+        const sent = await sendPasswordResetEmail(user, { reason: 'expired' }).catch(() => false);
+        return h.html(res, 401, views.loginPage({ csrf, error: sent
+          ? 'Your password has expired. We just emailed you a reset link.'
+          : 'Your password has expired. Request a reset link below.', email }));
+      }
 
       loginEmailLimiter.reset(email);
       db.prepare('UPDATE users SET last_login_at=? WHERE id=?').run(store.nowIso(), user.id);
@@ -132,8 +141,9 @@ async function handleWeb(req, res, url) {
       }
       if (pw !== body.confirm) return h.html(res, 400, views.resetPage({ csrf, token, error: 'The two passwords do not match.' }));
       const r = findReset();
-      const hash = await sec.hashPassword(pw);
-      db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(hash, r.user_id);
+      // setPassword restarts the 1-year expiry, clears the temp-password flag,
+      // and marks the new-member onboarding complete.
+      await store.setPassword(r.user_id, pw);
       db.prepare('UPDATE password_resets SET used_at=? WHERE token_hash=?').run(store.nowIso(), sec.sha256(token));
       db.prepare('DELETE FROM sessions WHERE user_id=?').run(r.user_id); // sign out everywhere
       return h.redirect(res, '/login?notice=reset');

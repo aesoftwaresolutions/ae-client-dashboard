@@ -35,4 +35,21 @@ module.exports = {
   // Set BOOTSTRAP_SECRET in the hosting env vars (never in a file or the repo).
   // When empty the bootstrap route is disabled (404). Remove/rotate it after use.
   bootstrapSecret: env.BOOTSTRAP_SECRET || '',
+  // Secret for POST /api/v1/admin/send-password-reminders (the daily cron trigger).
+  // When empty that route is disabled (404). Set REMINDER_SECRET in the hosting env vars.
+  reminderSecret: env.REMINDER_SECRET || '',
+  // Password policy: every password expires 1 year after it is set.
+  passwordExpiryDays: 365,
+  // New-member onboarding: the set-password link is valid 7 days; reminders go
+  // out on day 3 and day 6 after the temp password is issued if it is still unused.
+  onboardingLinkDays: 7,
+  onboardingReminderDays: [3, 6],
+  // Mail transport (MAIL_MODE=smtp). Credentials live in the hosting env vars,
+  // never in a file or the repo. MAIL_FROM is the address reminders come from.
+  smtpHost: env.MAIL_SMTP_HOST || '',
+  smtpPort: Number(env.MAIL_SMTP_PORT) || 587,
+  smtpUser: env.MAIL_SMTP_USER || '',
+  smtpPass: env.MAIL_SMTP_PASS || '',
+  smtpSecure: env.MAIL_SMTP_SECURE === '1', // '1' = implicit TLS (port 465); otherwise STARTTLS (port 587)
+  mailFrom: env.MAIL_FROM || 'AE Software Solutions <noreply@aesoftwaresolutions.com>',
 };

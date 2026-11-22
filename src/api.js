@@ -9,6 +9,7 @@ const { db } = require('./db');
 const h = require('./http');
 const store = require('./store');
 const sec = require('./security');
+const onboarding = require('./onboarding');
 const { BY_SLUG } = require('./services');
 
 const eventLimiter = new sec.RateLimiter(config.eventRateLimitPerHour, 3_600_000); // per API key
@@ -135,11 +136,15 @@ async function handleBootstrap(req, res, ip) {
     // Client login for Anthony (role client, so he sees AE's own dashboard).
     let tempPassword = null;
     let userCreated = false;
+    let welcomeEmailSent = false;
     const userRow = db.prepare('SELECT id FROM users WHERE email = ?').get(AE_EMAIL);
     if (!userRow) {
       tempPassword = sec.newToken(12);
-      await store.createUser({ clientId, email: AE_EMAIL, password: tempPassword, role: 'client' });
+      await store.createUser({ clientId, email: AE_EMAIL, password: tempPassword, role: 'client', tempPassword: true });
       userCreated = true;
+      // New-member onboarding: email the set-password link (7-day link, reminders day 3 + 6).
+      // Mail failing must not fail the bootstrap; the temp password still works.
+      try { welcomeEmailSent = await onboarding.sendPasswordResetEmail({ id: db.prepare('SELECT id FROM users WHERE email = ?').get(AE_EMAIL).id, email: AE_EMAIL }, { reason: 'welcome' }); } catch (e) { console.error('[api] bootstrap welcome email failed:', e.message); }
     }
     const existing = db.prepare("SELECT id FROM api_keys WHERE client_id = ? AND label = ? AND revoked_at IS NULL").get(clientId, 'front-desk webhook');
     let apiKey = null;
@@ -162,6 +167,7 @@ async function handleBootstrap(req, res, ip) {
       user_created: userCreated,
       user_email: AE_EMAIL,
       temp_password: tempPassword,
+      welcome_email_sent: welcomeEmailSent,
     });
   } catch (err) {
     console.error('[api] bootstrap error:', err);
@@ -177,6 +183,34 @@ async function handleApi(req, res, url) {
   // ---- One-time admin bootstrap (bypasses Bearer auth: no key exists yet) ----
   if (pathname === '/api/v1/admin/bootstrap') {
     return handleBootstrap(req, res, ip);
+  }
+
+  // ---- Daily password-reminder trigger (bypasses Bearer auth; gated by REMINDER_SECRET) ----
+  // POST /api/v1/admin/send-password-reminders with { "reminder_secret": "..." }
+  // (or an X-Reminder-Secret header). Runs the day-3 / day-6 onboarding reminders.
+  // Call it once a day from a cron. When REMINDER_SECRET is unset the route is 404.
+  if (pathname === '/api/v1/admin/send-password-reminders') {
+    if (!config.reminderSecret) return h.json(res, 404, { error: 'Not found' });
+    if (req.method !== 'POST') return h.json(res, 405, { error: 'Use POST' });
+    let body = {};
+    try { body = await h.readBody(req); } catch (err) { return h.json(res, err.status || 400, { error: err.message }); }
+    const given = String(req.headers['x-reminder-secret'] || body.reminder_secret || '');
+    const bad = badAuthLimiter.hit(`reminders:${ip}`);
+    if (!bad.ok) { res.setHeader('Retry-After', String(bad.retryAfter)); return h.json(res, 429, { error: 'Too many failed attempts' }); }
+    if (!given || !sec.safeEqual(given, config.reminderSecret)) {
+      logAccess(null, req, pathname, 401);
+      return h.json(res, 401, { error: 'Invalid reminder secret' });
+    }
+    badAuthLimiter.reset(`reminders:${ip}`);
+    try {
+      const result = await onboarding.runReminders();
+      logAccess(null, req, pathname, 200);
+      return h.json(res, 200, { ok: true, ...result });
+    } catch (err) {
+      console.error('[api] reminders error:', err);
+      logAccess(null, req, pathname, 500);
+      return h.json(res, 500, { error: 'Server error' });
+    }
   }
 
   // Reject repeated bad keys before doing anything else.
