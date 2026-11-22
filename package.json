@@ -5,11 +5,14 @@
   "private": true,
   "license": "UNLICENSED",
   "main": "server.js",
-  "engines": { "node": ">=22.13" },
+  "engines": {
+    "node": ">=22.13"
+  },
   "scripts": {
     "start": "node server.js",
     "seed": "node scripts/seed.js",
     "manage": "node scripts/manage.js",
-    "test": "node --test tests/smoke.test.js"
+    "test": "node --test tests/smoke.test.js tests/purchase-fulfillment.test.js",
+    "fulfill": "node scripts/purchase-fulfillment.js"
   }
 }

@@ -81,6 +81,7 @@ Not done yet. Steps, to be confirmed against the actual hPanel plan:
 5. **Create accounts** over SSH or the hPanel terminal: `node scripts/manage.js create-client ...`. Do **not** run the seed script in production (it refuses unless `--force`).
 6. **Email.** Set `MAIL_MODE=smtp` plus `MAIL_SMTP_HOST`, `MAIL_SMTP_PORT`, `MAIL_SMTP_USER`, `MAIL_SMTP_PASS` (and `MAIL_SMTP_SECURE=1` for port 465). Until then reset emails are not sent in production. Optional: `SUPPORT_NOTIFY_EMAIL` gets a short notice when a client posts a support message.
 6b. **Telnyx.** Set `TELNYX_PUBLIC_KEY` (base64, Mission Control > Keys and Credentials > Public Key) before pointing any Telnyx webhook at `/api/v1/webhooks/telnyx`.
+6c. **Purchase fulfillment watcher.** Set `STRIPE_API_KEY` in the hPanel env vars (a restricted read-only Stripe key: read charges, customers, invoices, coupons). Add an hPanel cron job, daily 18:23, running `node <app-dir>/scripts/purchase-fulfillment.js`. First run on the server: `node scripts/purchase-fulfillment.js --set-watermark 1792707816` (Oct 22 2026, the last processed sale) or the first real run writes "now" and skips the backlog. Each run checks Stripe for new succeeded charges, writes a fulfillment record per sale to `DATA_DIR/fulfillment/<charge_id>.json`, and advances the watermark. New sales show in the admin dashboard under "New sales" with what is still needed; mark each fulfilled there. The script never sends email and never writes to Stripe. Audit research, the two Muse setup renders, Sheets logging, and goal entries stay agent follow-ups, listed in each record. Do not run the old VM Python script alongside it.
 7. **Backups.** Copy the `DATA_DIR/dashboard.sqlite*` files on a schedule.
 8. **Verify:** sign in, post a test event with a key, confirm it appears, then revoke the test key.
 
@@ -94,8 +95,8 @@ src/services.js      17 services, event types, status rules
 src/store.js         all queries             src/api.js       Bearer API + Telnyx stub
 src/web.js           login/logout/reset/dashboard/support/admin   src/views.js   HTML pages
 src/telnyx.js        Ed25519 verification + direct Telnyx receiver
-public/              style.css, app.js       scripts/         seed.js, manage.js
-tests/smoke.test.js  end-to-end tests
+public/              style.css, app.js       scripts/         seed.js, manage.js, telnyx-relay.js, send-password-reminders.js, purchase-fulfillment.js
+tests/               smoke.test.js, purchase-fulfillment.test.js
 ```
 
 ## Security notes

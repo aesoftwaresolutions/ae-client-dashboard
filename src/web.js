@@ -7,6 +7,7 @@ const views = require('./views');
 const store = require('./store');
 const sec = require('./security');
 const { sendMail } = require('./mail');
+const fulfillment = require('../scripts/purchase-fulfillment');
 
 // Brute-force protection (per IP and per email).
 const loginIpLimiter = new sec.RateLimiter(30, 15 * 60_000);
@@ -172,7 +173,9 @@ async function handleWeb(req, res, url) {
           email: me.user.email, csrf,
           clients: store.listClientsOverview(),
           messages: store.listSupportMessages({ limit: 100 }),
-          notice: url.searchParams.get('notice') === 'handled' ? 'Message marked as handled.' : '',
+          fulfillments: fulfillment.listFulfillments(config.dataDir),
+          notice: url.searchParams.get('notice') === 'handled' ? 'Message marked as handled.'
+            : url.searchParams.get('notice') === 'fulfilled' ? 'Sale marked as fulfilled.' : '',
         }));
       }
       return h.html(res, 200, views.dashboardPage({ businessName: me.client.business_name, csrf }));
@@ -226,6 +229,19 @@ async function handleWeb(req, res, url) {
     const body = await h.readBody(req);
     if (h.checkCsrf(req, body)) store.markSupportHandled(handledMatch[1], me.user.id);
     return h.redirect(res, '/dashboard?notice=handled');
+  }
+
+  // --- Admin: mark a purchase fulfillment handled (AE staff only, CSRF checked) ---
+  const fulfilledMatch = /^\/admin\/fulfillment\/(ch_[A-Za-z0-9]+)\/handled$/.exec(pathname);
+  if (fulfilledMatch && method === 'POST') {
+    const me = currentUser(req);
+    if (!me) return h.redirect(res, '/login');
+    if (!isAdmin(me)) return h.html(res, 403, views.messagePage('Not allowed', 'This page is for AE staff only.'));
+    const body = await h.readBody(req);
+    if (h.checkCsrf(req, body)) {
+      try { fulfillment.markFulfillmentHandled(fulfilledMatch[1], config.dataDir); } catch { /* already gone */ }
+    }
+    return h.redirect(res, '/dashboard?notice=fulfilled');
   }
 
   return false; // not a web route
