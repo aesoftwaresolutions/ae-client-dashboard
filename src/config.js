@@ -54,4 +54,13 @@ module.exports = {
   smtpPass: env.MAIL_SMTP_PASS || '',
   smtpSecure: env.MAIL_SMTP_SECURE === '1', // '1' = implicit TLS (port 465); otherwise STARTTLS (port 587)
   mailFrom: env.MAIL_FROM || 'AE Software Solutions <admin@aesoftwaresolutions.com>',
+  // Telnyx webhook signing (POST /api/v1/webhooks/telnyx). TELNYX_PUBLIC_KEY is the
+  // base64 Ed25519 public key from Telnyx Mission Control (Keys and Credentials).
+  // It is a public key, not a secret, but set it in the hosting env vars like the rest.
+  // When empty the receiver rejects every request (fails closed).
+  telnyxPublicKey: env.TELNYX_PUBLIC_KEY || '',
+  telnyxToleranceSec: 300, // replay window: reject signatures older (or newer) than 5 minutes
+  // Optional: where to send a notice when a client posts a support message.
+  // When empty, messages are only stored and shown in the admin view.
+  supportNotifyEmail: env.SUPPORT_NOTIFY_EMAIL || '',
 };

@@ -1,7 +1,8 @@
 'use strict';
 // REST API for AE agents. Bearer auth with a per-client key; a key can only touch its own client_id.
 //   POST /api/v1/{service}/events
-//   POST /api/v1/webhooks/telnyx/call-summary      (stub, Front Desk)
+//   POST /api/v1/webhooks/telnyx/call-summary      (relay from the WordPress webhook, Bearer key)
+//   POST /api/v1/webhooks/telnyx                   (direct from Telnyx, Ed25519 signed, no Bearer key)
 //   GET  /api/v1/clients/{client_id}/services
 //   GET  /api/v1/clients/{client_id}/activity?limit=50
 const config = require('./config');
@@ -10,6 +11,7 @@ const h = require('./http');
 const store = require('./store');
 const sec = require('./security');
 const onboarding = require('./onboarding');
+const telnyx = require('./telnyx');
 const { BY_SLUG } = require('./services');
 
 const eventLimiter = new sec.RateLimiter(config.eventRateLimitPerHour, 3_600_000); // per API key
@@ -176,6 +178,36 @@ async function handleBootstrap(req, res, ip) {
   }
 }
 
+const telnyxBadSigLimiter = new sec.RateLimiter(60, 10 * 60_000); // per IP, failed signatures only
+
+async function handleTelnyxDirect(req, res, ip, pathname) {
+  if (req.method !== 'POST') return h.json(res, 405, { error: 'Use POST' });
+  let raw;
+  try { raw = await h.readRawBody(req, 256 * 1024); } catch (err) { return h.json(res, err.status || 400, { error: err.message }); }
+  const check = telnyx.verifyTelnyxSignature({ rawBody: raw, headers: req.headers });
+  if (!check.ok) {
+    if (check.status === 503) console.error('[api] telnyx webhook rejected: TELNYX_PUBLIC_KEY is not set');
+    const bad = telnyxBadSigLimiter.hit(`bad:${ip}`);
+    logAccess(null, req, pathname, bad.ok ? check.status : 429);
+    if (!bad.ok) { res.setHeader('Retry-After', String(bad.retryAfter)); return h.json(res, 429, { error: 'Too many failed attempts' }); }
+    return h.json(res, check.status, { error: check.reason });
+  }
+  let body;
+  try { body = JSON.parse(raw.toString('utf8')); } catch {
+    logAccess(null, req, pathname, 400);
+    return h.json(res, 400, { error: 'Invalid JSON' });
+  }
+  try {
+    const result = telnyx.handleTelnyxEvent(body);
+    logAccess(null, req, pathname, 200);
+    return h.json(res, 200, { ok: true, ...result });
+  } catch (err) {
+    console.error('[api] telnyx webhook error:', err);
+    logAccess(null, req, pathname, 500);
+    return h.json(res, 500, { error: 'Server error' }); // non 2xx so Telnyx retries
+  }
+}
+
 async function handleApi(req, res, url) {
   const { pathname } = url;
   const ip = h.clientIp(req);
@@ -211,6 +243,13 @@ async function handleApi(req, res, url) {
       logAccess(null, req, pathname, 500);
       return h.json(res, 500, { error: 'Server error' });
     }
+  }
+
+  // ---- Direct Telnyx webhook (bypasses Bearer auth; Ed25519 signature instead) ----
+  // Telnyx cannot send our Bearer key, so the tenant comes from telnyx_agents
+  // (assistant id or dialled number), never from the request.
+  if (pathname === '/api/v1/webhooks/telnyx') {
+    return handleTelnyxDirect(req, res, ip, pathname);
   }
 
   // Reject repeated bad keys before doing anything else.

@@ -93,10 +93,58 @@ function dashboardPage({ businessName, csrf }) {
 </main>`, { script: '/static/app.js' });
 }
 
-function adminPage({ email, csrf }) {
+// Dates for staff pages, written out ("Nov 22, 2026, 1:48 AM") so no ISO dashes show.
+const fmtDate = (iso, withTime = false) => {
+  const d = new Date(iso);
+  if (!iso || Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString('en-US', {
+    timeZone: 'America/New_York', month: 'short', day: 'numeric', year: 'numeric',
+    ...(withTime ? { hour: 'numeric', minute: '2-digit' } : {}),
+  });
+};
+
+/**
+ * AE staff view: every client, their services and statuses, and the support inbox.
+ * Server rendered, no script, everything escaped. Only reached when role is admin.
+ */
+function adminPage({ email, csrf, clients = [], messages = [], notice: info = '' }) {
+  const open = messages.filter((m) => m.status === 'open').length;
+  const clientRows = clients.length ? clients.map((c) => `
+<article class="glass card admin__client">
+  <div class="card__head">
+    <div><h3 class="card__name">${esc(c.business_name)}</h3>
+    <p class="card__plan">${esc(c.contact_name || '')}${c.contact_name ? ' · ' : ''}${esc(c.email)}</p>
+    <p class="card__plan">Client ID ${esc(c.id)} · since ${esc(fmtDate(c.created_at))}</p></div>
+    <span class="pill pill--${c.status === 'active' ? 'active' : 'paused'}">${esc(c.status === 'active' ? 'Active' : c.status)}</span>
+  </div>
+  ${c.open_messages ? `<p class="card__update"><strong>${c.open_messages}</strong> open message${c.open_messages === 1 ? '' : 's'}</p>` : ''}
+  ${c.services.length ? `<ul class="admin__services">${c.services.map((s) => `
+    <li><span>${esc(s.name)}${s.plan ? ` <span class="muted small">${esc(s.plan)}</span>` : ''}</span>
+    <span class="pill pill--${esc(s.status)}">${esc(s.status_label)}</span></li>`).join('')}</ul>`
+    : '<p class="muted small">No services yet.</p>'}
+</article>`).join('') : '<div class="glass empty">No clients yet. Use <code>npm run manage</code> to create one.</div>';
+
+  const messageRows = messages.length ? `<ol class="glass feed">${messages.map((m) => `
+  <li>
+    <div class="feed__meta"><span>${esc(fmtDate(m.created_at, true))}</span><span class="tag">${m.status === 'open' ? 'Open' : 'Handled'}</span></div>
+    <div>
+      <p class="feed__title">${esc(m.subject || 'No subject')} <span class="muted small">from ${esc(m.business_name)} · ${esc(m.from_email)}</span></p>
+      <p class="feed__detail admin__message">${esc(m.message)}</p>
+      ${m.status === 'open'
+        ? `<form method="post" action="/admin/support/${esc(m.id)}/handled" class="admin__handled">${csrfField(csrf)}<button class="btn btn--ghost" type="submit">Mark handled</button></form>`
+        : `<p class="muted small">Handled ${esc(fmtDate(m.handled_at, true))}</p>`}
+    </div>
+  </li>`).join('')}</ol>` : '<div class="glass empty">No messages yet.</div>';
+
   return layout('Admin', `${header('AE Admin', csrf)}
-<main class="wrap"><div class="glass pad"><h1>Signed in as ${esc(email)}</h1>
-<p class="muted">The admin view is not part of this MVP build. Use <code>npm run manage</code> on the server to create clients, keys and subscriptions.</p></div></main>`);
+<main class="wrap">
+  ${notice(info)}
+  <p class="muted small">Signed in as ${esc(email)} (AE staff)</p>
+  <h1>Clients</h1>
+  <section class="cards">${clientRows}</section>
+  <h2>Support messages${open ? ` (${open} open)` : ''}</h2>
+  ${messageRows}
+</main>`);
 }
 
 module.exports = { loginPage, forgotPage, resetPage, messagePage, dashboardPage, adminPage };

@@ -12,6 +12,10 @@ const { sendMail } = require('./mail');
 const loginIpLimiter = new sec.RateLimiter(30, 15 * 60_000);
 const loginEmailLimiter = new sec.RateLimiter(8, 15 * 60_000);
 const forgotLimiter = new sec.RateLimiter(5, 60 * 60_000);
+const supportLimiter = new sec.RateLimiter(10, 60 * 60_000); // per user
+
+const SUPPORT_SUBJECT_MAX = 120;
+const SUPPORT_MESSAGE_MAX = 2000;
 
 // ---- Sessions ----------------------------------------------------------------
 function createSession(res, userId) {
@@ -33,6 +37,9 @@ function currentUser(req) {
   const client = row.client_id ? db.prepare('SELECT id, business_name FROM clients WHERE id=?').get(row.client_id) : null;
   return { user: row, client };
 }
+
+/** AE staff: role 'admin' with no client attached (see users.role in src/db.js). */
+const isAdmin = (me) => !!me && me.user.role === 'admin' && !me.user.client_id;
 
 const tooMany = (res, retryAfter) => {
   res.setHeader('Retry-After', String(retryAfter));
@@ -159,7 +166,15 @@ async function handleWeb(req, res, url) {
     }
     if (pathname === '/dashboard') {
       const csrf = h.ensureCsrf(req, res);
-      if (me.user.role === 'admin') return h.html(res, 200, views.adminPage({ email: me.user.email, csrf }));
+      // AE staff are users with role 'admin' (and no client). They get the admin view.
+      if (isAdmin(me)) {
+        return h.html(res, 200, views.adminPage({
+          email: me.user.email, csrf,
+          clients: store.listClientsOverview(),
+          messages: store.listSupportMessages({ limit: 100 }),
+          notice: url.searchParams.get('notice') === 'handled' ? 'Message marked as handled.' : '',
+        }));
+      }
       return h.html(res, 200, views.dashboardPage({ businessName: me.client.business_name, csrf }));
     }
     // /app/data: the client id comes from the session, never from the request.
@@ -168,7 +183,49 @@ async function handleWeb(req, res, url) {
       business_name: me.client.business_name,
       services: store.listServiceCards(me.client.id),
       activity: store.listActivity(me.client.id, 30),
+      billing: store.getBilling(me.client.id),
     });
+  }
+
+  // --- Message AE support (client accounts; JSON from the dashboard, CSRF checked) ---
+  if (pathname === '/app/support') {
+    if (method !== 'POST') return h.json(res, 405, { error: 'Use POST' });
+    const me = currentUser(req);
+    if (!me) return h.json(res, 401, { error: 'Not signed in' });
+    if (me.user.role !== 'client' || !me.client) return h.json(res, 403, { error: 'Not a client account' });
+    const body = await h.readBody(req, 16 * 1024);
+    if (!h.checkCsrf(req, body)) return h.json(res, 400, { error: 'Your session expired. Please refresh the page and try again.' });
+    const subject = typeof body.subject === 'string' ? body.subject.trim() : '';
+    const message = typeof body.message === 'string' ? body.message.trim() : '';
+    if (!message) return h.json(res, 400, { error: 'Please write a message.' });
+    if (message.length > SUPPORT_MESSAGE_MAX) return h.json(res, 400, { error: `Please keep the message under ${SUPPORT_MESSAGE_MAX} characters.` });
+    if (subject.length > SUPPORT_SUBJECT_MAX) return h.json(res, 400, { error: `Please keep the subject under ${SUPPORT_SUBJECT_MAX} characters.` });
+    const rl = supportLimiter.hit(me.user.id);
+    if (!rl.ok) {
+      res.setHeader('Retry-After', String(rl.retryAfter));
+      return h.json(res, 429, { error: 'You have sent several messages in the last hour. Please try again later.' });
+    }
+    const id = store.addSupportMessage({ clientId: me.client.id, userId: me.user.id, subject, message });
+    if (config.supportNotifyEmail) {
+      // Best effort notice to AE staff. The message itself stays in the dashboard.
+      sendMail({
+        to: config.supportNotifyEmail,
+        subject: `New dashboard message from ${me.client.business_name}`.replace(/[\r\n]+/g, ' ').slice(0, 150),
+        text: `${me.client.business_name} sent a message from the client dashboard.\n\nSign in to read it: ${config.baseUrl}/dashboard`,
+      }).catch((e) => console.error('[mail] support notice failed:', e.message));
+    }
+    return h.json(res, 200, { ok: true, id });
+  }
+
+  // --- Admin: mark a support message handled (AE staff only, CSRF checked) ---
+  const handledMatch = /^\/admin\/support\/(msg_[0-9a-f]{16})\/handled$/.exec(pathname);
+  if (handledMatch && method === 'POST') {
+    const me = currentUser(req);
+    if (!me) return h.redirect(res, '/login');
+    if (!isAdmin(me)) return h.html(res, 403, views.messagePage('Not allowed', 'This page is for AE staff only.'));
+    const body = await h.readBody(req);
+    if (h.checkCsrf(req, body)) store.markSupportHandled(handledMatch[1], me.user.id);
+    return h.redirect(res, '/dashboard?notice=handled');
   }
 
   return false; // not a web route

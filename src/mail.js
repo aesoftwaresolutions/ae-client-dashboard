@@ -100,8 +100,9 @@ function sendSmtp({ to, subject, text }) {
         `Subject: ${subject}`,
         'Content-Type: text/plain; charset=utf-8',
         '',
-        // Dot-stuff lines starting with a dot (SMTP DATA rule).
-        text.replace(/\r?\n\./g, '\n..'),
+        // Every line ends in CRLF (servers reject bare LF), and any line that starts
+        // with a dot, including the first, is dot-stuffed (SMTP DATA rule).
+        String(text).replace(/\r\n|\r|\n/g, '\n').split('\n').map((l) => (l.startsWith('.') ? `.${l}` : l)).join('\r\n'),
         '',
       ].join('\r\n');
       const queued = readReply();

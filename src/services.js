@@ -12,7 +12,7 @@ const SERVICES = [
   { slug: 'always-on-front-desk', name: 'Always-On Front Desk', kind: 'calls',
     events: ['setup_complete', 'call_answered', 'call_missed', 'call_summary', 'after_hours_call_answered', 'after_hours_call', 'callback_requested', 'plan_limit_warning'] },
   { slug: 'websites', name: 'Websites', events: ['milestone_completed', 'milestone_reached', 'review_ready', 'site_launched', 'maintenance_update', 'revision_requested', 'revision_complete'] },
-  { slug: 'online-presence-management', name: 'Online Presence Management', events: OPM_EVENTS },
+  { slug: 'online-presence-management', name: 'Online Presence Management', kind: 'presence', events: OPM_EVENTS },
   { slug: 'missed-lead-audit', name: 'Missed-Lead Audit', events: ['audit_scheduled', 'audit_in_progress', 'audit_started', 'report_ready', 'credit_applied'] },
   { slug: 'launch-package', name: 'Launch Package', events: ['setup_started', 'deliverable_ready', 'setup_complete', 'checklist_item_done', 'launch_complete'] },
   { slug: 'social-front-desk', name: 'Social Front Desk', events: ['setup_complete', 'message_answered', 'comment_replied', 'response_time_update'] },

@@ -1,6 +1,7 @@
 'use strict';
 // SQLite via Node's built-in node:sqlite (no native build step, no npm packages).
-// Schema follows spec section 6, plus sessions, password_resets and api_access_log.
+// Schema follows spec section 6, plus sessions, password_resets, api_access_log,
+// telnyx_webhook_events, payment_methods and support_messages.
 const fs = require('node:fs');
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
@@ -169,6 +170,40 @@ CREATE TABLE IF NOT EXISTS call_summaries (
   created_at             TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_call_summaries_client_time ON call_summaries (client_id, occurred_at DESC);
+
+-- Direct Telnyx receiver: one row per delivered Telnyx event id, so retries and
+-- replays inside the signature window are acknowledged but never processed twice.
+CREATE TABLE IF NOT EXISTS telnyx_webhook_events (
+  event_id    TEXT PRIMARY KEY,
+  event_type  TEXT NOT NULL,
+  received_at TEXT NOT NULL
+);
+
+-- Billing view: the card on file, last 4 digits ONLY. There is no Stripe client in
+-- this app; AE staff record this with scripts/manage.js set-card. The CHECK makes it
+-- impossible to store anything but exactly four digits.
+CREATE TABLE IF NOT EXISTS payment_methods (
+  client_id  TEXT PRIMARY KEY REFERENCES clients(id),
+  brand      TEXT,
+  last4      TEXT NOT NULL CHECK (length(last4) = 4 AND last4 GLOB '[0-9][0-9][0-9][0-9]'),
+  exp_month  INTEGER CHECK (exp_month IS NULL OR exp_month BETWEEN 1 AND 12),
+  exp_year   INTEGER,
+  updated_at TEXT NOT NULL
+);
+
+-- Client to AE support messages (dashboard "Message AE" form), shown in the admin view.
+CREATE TABLE IF NOT EXISTS support_messages (
+  id          TEXT PRIMARY KEY,
+  client_id   TEXT NOT NULL REFERENCES clients(id),
+  user_id     TEXT NOT NULL REFERENCES users(id),
+  subject     TEXT,
+  message     TEXT NOT NULL,
+  status      TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','handled')),
+  created_at  TEXT NOT NULL,
+  handled_at  TEXT,
+  handled_by  TEXT REFERENCES users(id)
+);
+CREATE INDEX IF NOT EXISTS idx_support_messages_time ON support_messages (status, created_at DESC);
 `);
 
 // ---- Migrations for databases created before a schema change ----------------
@@ -180,6 +215,11 @@ CREATE INDEX IF NOT EXISTS idx_call_summaries_client_time ON call_summaries (cli
   if (!cols.has('password_set_at')) db.exec('ALTER TABLE users ADD COLUMN password_set_at TEXT');
   if (!cols.has('must_reset_password')) db.exec("ALTER TABLE users ADD COLUMN must_reset_password INTEGER NOT NULL DEFAULT 0");
   db.prepare('UPDATE users SET password_set_at = created_at WHERE password_set_at IS NULL').run();
+}
+// Invoices had no date column; the billing view needs one to sort and display them.
+{
+  const cols = new Set(db.prepare('PRAGMA table_info(invoices)').all().map((c) => c.name));
+  if (!cols.has('issued_at')) db.exec('ALTER TABLE invoices ADD COLUMN issued_at TEXT');
 }
 
 /** Run fn inside a transaction; roll back if it throws. */

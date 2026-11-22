@@ -51,15 +51,20 @@ const json = (res, status, obj) => send(res, status, JSON.stringify(obj), 'appli
 const html = (res, status, body) => send(res, status, body, 'text/html; charset=utf-8');
 function redirect(res, location) { res.writeHead(303, { Location: location }); res.end(); }
 
-/** Reads the request body (max 64 KB) and parses JSON or form-encoded data. */
-async function readBody(req, max = 65536) {
+/** Reads the exact request body bytes (max 64 KB by default). Needed for webhook signatures. */
+async function readRawBody(req, max = 65536) {
   const chunks = []; let size = 0;
   for await (const c of req) {
     size += c.length;
     if (size > max) { const e = new Error('Request body too large'); e.status = 413; throw e; }
     chunks.push(c);
   }
-  const raw = Buffer.concat(chunks).toString('utf8');
+  return Buffer.concat(chunks);
+}
+
+/** Reads the request body (max 64 KB) and parses JSON or form-encoded data. */
+async function readBody(req, max = 65536) {
+  const raw = (await readRawBody(req, max)).toString('utf8');
   const type = String(req.headers['content-type'] || '');
   if (type.includes('application/json')) {
     try { return raw ? JSON.parse(raw) : {}; } catch { const e = new Error('Invalid JSON'); e.status = 400; throw e; }
@@ -93,5 +98,5 @@ function serveStatic(res, pathname) {
 
 module.exports = {
   clientIp, parseCookies, setCookie, SESSION_COOKIE, securityHeaders,
-  send, json, html, redirect, readBody, ensureCsrf, checkCsrf, serveStatic,
+  send, json, html, redirect, readBody, readRawBody, ensureCsrf, checkCsrf, serveStatic,
 };
