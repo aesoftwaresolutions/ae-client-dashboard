@@ -133,6 +133,42 @@ CREATE TABLE IF NOT EXISTS api_access_log (
   status    INTEGER NOT NULL,
   at        TEXT NOT NULL
 );
+
+-- Phone-to-client mapping for Telnyx Front Desk routing. Every inbound
+-- Telnyx webhook resolves telnyx_assistant_id or telnyx_phone_number to a
+-- client_id through this table, so calls are never assigned to the wrong tenant.
+CREATE TABLE IF NOT EXISTS telnyx_agents (
+  id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_id             TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  service_slug          TEXT NOT NULL CHECK (service_slug IN ('front-desk', 'always-on-front-desk')),
+  telnyx_assistant_id   TEXT UNIQUE NOT NULL,
+  telnyx_phone_number   TEXT UNIQUE NOT NULL,
+  transfer_phone_number TEXT NOT NULL,
+  tier_call_limit       INTEGER NOT NULL DEFAULT 60,
+  status                TEXT NOT NULL DEFAULT 'provisioning', -- provisioning | qa_pending | active | paused
+  created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at            TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_telnyx_agents_phone ON telnyx_agents (telnyx_phone_number);
+CREATE INDEX IF NOT EXISTS idx_telnyx_agents_assistant ON telnyx_agents (telnyx_assistant_id);
+
+-- Per-call summaries, one row per Telnyx conversation. telnyx_conversation_id
+-- is the idempotency key so webhook retries never create a duplicate row.
+-- caller_display holds a masked phone or first name ONLY, never a full number.
+CREATE TABLE IF NOT EXISTS call_summaries (
+  id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_id              TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  telnyx_agent_id        INTEGER NOT NULL REFERENCES telnyx_agents(id),
+  telnyx_conversation_id TEXT UNIQUE NOT NULL,
+  occurred_at            TEXT NOT NULL,
+  duration_secs          INTEGER DEFAULT 0,
+  caller_display         TEXT NOT NULL,
+  outcome                TEXT NOT NULL, -- answered | booked | transferred | callback | missed
+  summary_text           TEXT NOT NULL,
+  flagged_for_review     INTEGER NOT NULL DEFAULT 0,
+  created_at             TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_call_summaries_client_time ON call_summaries (client_id, occurred_at DESC);
 `);
 
 // ---- Migrations for databases created before a schema change ----------------
