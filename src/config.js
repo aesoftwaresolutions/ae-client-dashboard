@@ -46,10 +46,12 @@ module.exports = {
   onboardingReminderDays: [3, 6],
   // Mail transport (MAIL_MODE=smtp). Credentials live in the hosting env vars,
   // never in a file or the repo. MAIL_FROM is the address reminders come from.
+  // Business mail (password resets, onboarding, support) goes out as
+  // admin@aesoftwaresolutions.com. Outreach stays on anthony@aesoftwaresolutions.com.
   smtpHost: env.MAIL_SMTP_HOST || '',
   smtpPort: Number(env.MAIL_SMTP_PORT) || 587,
   smtpUser: env.MAIL_SMTP_USER || '',
   smtpPass: env.MAIL_SMTP_PASS || '',
   smtpSecure: env.MAIL_SMTP_SECURE === '1', // '1' = implicit TLS (port 465); otherwise STARTTLS (port 587)
-  mailFrom: env.MAIL_FROM || 'AE Software Solutions <noreply@aesoftwaresolutions.com>',
+  mailFrom: env.MAIL_FROM || 'AE Software Solutions <admin@aesoftwaresolutions.com>',
 };
