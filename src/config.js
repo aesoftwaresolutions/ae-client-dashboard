@@ -31,4 +31,8 @@ module.exports = {
   sessionDays: 7,
   resetTokenMinutes: 60,
   quietDays: 14, // spec 5.3: no events in 14 days shows "No recent activity"
+  // One-time admin bootstrap secret for POST /api/v1/admin/bootstrap.
+  // Set BOOTSTRAP_SECRET in the hosting env vars (never in a file or the repo).
+  // When empty the bootstrap route is disabled (404). Remove/rotate it after use.
+  bootstrapSecret: env.BOOTSTRAP_SECRET || '',
 };

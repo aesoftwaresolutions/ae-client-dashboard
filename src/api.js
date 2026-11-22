@@ -95,9 +95,64 @@ function ingestTelnyx(key, input) {
   }, service);
 }
 
+/**
+ * One-time admin bootstrap. Creates AE Software Solutions LLC as a client
+ * (if it does not exist), ensures a Front Desk subscription, and creates one
+ * API key labelled "front-desk webhook". Returns the client id and the key
+ * ONCE (only the hash is stored). Idempotent: a second call while a live key
+ * already exists returns 409 instead of creating a duplicate.
+ * Gated by the BOOTSTRAP_SECRET env var (config.bootstrapSecret). The route
+ * is 404 when no secret is configured. Remove/rotate the secret after use.
+ */
+async function handleBootstrap(req, res, ip) {
+  if (!config.bootstrapSecret) return h.json(res, 404, { error: 'Not found' });
+  if (req.method !== 'POST') return h.json(res, 405, { error: 'Use POST' });
+  let body = {};
+  try { body = await h.readBody(req); } catch (err) { return h.json(res, err.status || 400, { error: err.message }); }
+  const given = String(req.headers['x-bootstrap-secret'] || body.bootstrap_secret || '');
+  const bad = badAuthLimiter.hit(`bootstrap:${ip}`);
+  if (!bad.ok) { res.setHeader('Retry-After', String(bad.retryAfter)); return h.json(res, 429, { error: 'Too many failed attempts' }); }
+  if (!given || !sec.safeEqual(given, config.bootstrapSecret)) {
+    logAccess(null, req, '/api/v1/admin/bootstrap', 401);
+    return h.json(res, 401, { error: 'Invalid bootstrap secret' });
+  }
+  badAuthLimiter.reset(`bootstrap:${ip}`);
+
+  try {
+    const AE_EMAIL = 'anthony@aesoftwaresolutions.com';
+    const row = db.prepare('SELECT id FROM clients WHERE email = ?').get(AE_EMAIL);
+    const clientId = row ? row.id : store.createClient({
+      businessName: 'AE Software Solutions LLC',
+      contactName: 'Anthony Pioquinto',
+      email: AE_EMAIL,
+      phone: '+17179771021',
+    });
+    if (!store.hasSubscription(clientId, 'front-desk')) {
+      store.addSubscription({ clientId, service: 'front-desk', plan: 'Front Desk 99', priceCents: 9900, billing: 'monthly' });
+    }
+    const existing = db.prepare("SELECT id FROM api_keys WHERE client_id = ? AND label = ? AND revoked_at IS NULL").get(clientId, 'front-desk webhook');
+    if (existing) {
+      logAccess(null, req, '/api/v1/admin/bootstrap', 409);
+      return h.json(res, 409, { error: 'An active front-desk webhook key already exists for this client', client_id: clientId, key_id: existing.id });
+    }
+    const { id: keyId, key } = store.createApiKey({ clientId, label: 'front-desk webhook' });
+    logAccess(null, req, '/api/v1/admin/bootstrap', 200);
+    return h.json(res, 200, { ok: true, client_id: clientId, api_key: key, key_id: keyId });
+  } catch (err) {
+    console.error('[api] bootstrap error:', err);
+    logAccess(null, req, '/api/v1/admin/bootstrap', 500);
+    return h.json(res, 500, { error: 'Server error' });
+  }
+}
+
 async function handleApi(req, res, url) {
   const { pathname } = url;
   const ip = h.clientIp(req);
+
+  // ---- One-time admin bootstrap (bypasses Bearer auth: no key exists yet) ----
+  if (pathname === '/api/v1/admin/bootstrap') {
+    return handleBootstrap(req, res, ip);
+  }
 
   // Reject repeated bad keys before doing anything else.
   const bad = badAuthLimiter.hit(`probe:${ip}`);
