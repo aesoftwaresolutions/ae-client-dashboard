@@ -85,7 +85,7 @@
       c.recent_calls.map(function (r) {
         return el('li', {}, el('span', { class: 'card__when' }, formatWhen(r.occurred_at)), r.detail);
       }))) : null;
-    return el('article', { class: 'glass card' },
+    return el('article', { class: 'glass card', 'data-reveal': '' },
       el('div', { class: 'card__head' },
         el('div', {}, el('h3', { class: 'card__name' }, c.name), c.plan && el('p', { class: 'card__plan' }, c.plan)),
         el('span', { class: 'pill pill--' + c.status }, c.status_label)),
@@ -130,7 +130,7 @@
               i.pdf_url ? el('a', { href: i.pdf_url, target: '_blank', rel: 'noopener noreferrer' }, 'View PDF') : null));
         })))
       : el('p', { class: 'muted' }, 'No invoices yet.');
-    return el('section', { class: 'glass pad billing', 'aria-label': 'Billing' },
+    return el('div', { class: 'glass pad billing', 'data-reveal': '' },
       next, card,
       el('h3', { class: 'billing__head' }, 'Active subscriptions'),
       active.length ? el.apply(null, ['ul', { class: 'billing__list' }].concat(active.map(subRow))) : el('p', { class: 'muted' }, 'No active subscriptions.'),
@@ -138,32 +138,45 @@
       past.length ? el.apply(null, ['ul', { class: 'billing__list' }].concat(past.map(subRow))) : null,
       el('h3', { class: 'billing__head' }, 'Invoices'),
       invoiceList,
-      el('p', { class: 'muted small' }, 'This page is read only. To change a plan or your card, send us a message below.'));
+      el('p', { class: 'muted small' }, 'This page is read only. To change a plan or your card, ',
+        el('button', { class: 'linklike', type: 'button', 'data-open-support': '' }, 'send us a message'), '.'));
   }
 
   function renderFeed(items) {
-    if (!items.length) return el('div', { class: 'glass empty' }, 'Nothing yet. Updates from your services will show up here.');
-    return el('ol', { class: 'glass feed' }, ...items.map(function (e) {
+    if (!items.length) return el('div', { class: 'glass empty', 'data-reveal': '' }, 'Nothing yet. Updates from your services will show up here.');
+    return el('ol', { class: 'glass feed', 'data-reveal': '' }, ...items.map(function (e) {
       return el('li', {},
         el('div', { class: 'feed__meta' }, el('span', {}, formatWhen(e.occurred_at)), el('span', { class: 'tag' }, e.service_name)),
         el('div', {}, el('p', { class: 'feed__title' }, e.title), e.detail && el('p', { class: 'feed__detail' }, e.detail)));
     }));
   }
 
-  // The live part (cards, feed, billing) is redrawn every minute. The support form
-  // lives outside it so a half typed message is never wiped by the refresh.
+  // The live part (cards, feed, billing) is redrawn every minute. The support form lives
+  // in the popup outside it, so a half typed message is never wiped by the refresh.
   var live = el('div', {});
+  var firstRender = true;
 
   function render(data) {
     live.replaceChildren(
-      el('h1', {}, 'Your services'),
-      data.services.length
-        ? el('section', { class: 'cards' }, ...data.services.map(renderCard))
-        : el('div', { class: 'glass empty' }, 'No services yet. Once AE sets one up for you, it will appear here.'),
-      el('h2', {}, 'Recent activity'),
-      renderFeed(data.activity),
-      data.billing ? el('h2', {}, 'Billing') : null,
-      renderBilling(data.billing));
+      el('section', { id: 'services', class: 'section', 'aria-labelledby': 'services-title' },
+        el('h1', { id: 'services-title' }, 'Your services'),
+        data.services.length
+          ? el('div', { class: 'cards', 'data-stagger': '' }, ...data.services.map(renderCard))
+          : el('div', { class: 'glass empty', 'data-reveal': '' }, 'No services yet. Once AE sets one up for you, it will appear here.')),
+      el('section', { id: 'activity', class: 'section', 'aria-labelledby': 'activity-title' },
+        el('h2', { id: 'activity-title' }, 'Recent activity'),
+        renderFeed(data.activity)),
+      data.billing ? el('section', { id: 'billing', class: 'section', 'aria-labelledby': 'billing-title' },
+        el('h2', { id: 'billing-title' }, 'Billing'),
+        renderBilling(data.billing)) : null);
+    // Fade in on the first draw only; the minute refresh just swaps the data.
+    if (window.AEMotion) {
+      window.AEMotion.observe(live, firstRender);
+      window.AEMotion.relayout();
+    } else {
+      live.querySelectorAll('[data-reveal]').forEach(function (n) { n.classList.add('is-revealed'); });
+    }
+    firstRender = false;
   }
 
   function csrfToken() {
@@ -171,9 +184,14 @@
     return input ? input.value : '';
   }
 
-  /** Message AE support. Posts JSON to /app/support with the page CSRF token. */
-  function renderSupport() {
-    var status = el('p', { class: 'muted small', role: 'status', 'aria-live': 'polite' }, '');
+  /**
+   * Message AE support, in the same glass card popup the website uses for contact.
+   * Desktop: centred card. Phones: bottom sheet. Escape, the close button or a click on
+   * the dimmed page closes it; focus stays inside while open and returns afterwards.
+   * Posts JSON to /app/support with the page CSRF token.
+   */
+  function buildSupport() {
+    var status = el('p', { class: 'muted small pop__status', role: 'status', 'aria-live': 'polite' }, '');
     var subject = el('input', { type: 'text', name: 'subject', maxlength: '120', autocomplete: 'off' });
     var message = el('textarea', { name: 'message', rows: '5', maxlength: '2000', required: 'required' });
     var button = el('button', { class: 'btn', type: 'submit' }, 'Send message');
@@ -181,12 +199,61 @@
       el('label', {}, 'Subject (optional)', subject),
       el('label', {}, 'Message', message),
       button, status);
+    var closeBtn = el('button', { class: 'pop__close', type: 'button', 'aria-label': 'Close' }, '×');
+    var card = el('div', { class: 'pop__card', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'support-title', tabindex: '-1' },
+      closeBtn,
+      el('p', { class: 'brand pop__eyebrow' }, 'AE support'),
+      el('h2', { id: 'support-title', class: 'pop__title' }, 'Message AE'),
+      el('p', { class: 'pop__lead' }, 'Have a question about a service or your bill? Send us a message here and our team will see it.'),
+      form);
+    var pop = el('div', { class: 'pop', id: 'support-pop', hidden: 'hidden' }, card);
+    var lastFocus = null;
+    var closeTimer = 0;
+    var calm = !!(window.AEMotion && window.AEMotion.calm);
+
+    function isOpen() { return !pop.hidden && pop.classList.contains('is-open'); }
+    function open(from) {
+      clearTimeout(closeTimer);
+      lastFocus = from || document.activeElement;
+      pop.hidden = false;
+      document.documentElement.classList.add('ae-pop-lock');
+      void pop.offsetWidth; // commit display before the transition
+      pop.classList.add('is-open');
+      setTimeout(function () { (message.value ? message : subject).focus(); }, calm ? 0 : 60);
+    }
+    function close() {
+      if (pop.hidden) return;
+      pop.classList.remove('is-open');
+      document.documentElement.classList.remove('ae-pop-lock');
+      closeTimer = setTimeout(function () { pop.hidden = true; }, calm ? 0 : 220);
+      if (lastFocus && lastFocus.focus) lastFocus.focus();
+    }
+    closeBtn.addEventListener('click', close);
+    pop.addEventListener('click', function (ev) { if (ev.target === pop) close(); });
+    document.addEventListener('keydown', function (ev) {
+      if (!isOpen()) return;
+      if (ev.key === 'Escape') { ev.preventDefault(); close(); return; }
+      if (ev.key !== 'Tab') return;
+      var items = Array.prototype.filter.call(card.querySelectorAll('button, input, textarea, a[href]'), function (n) { return !n.disabled; });
+      if (!items.length) return;
+      var first = items[0];
+      var last = items[items.length - 1];
+      if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
+      else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
+      else if (!card.contains(document.activeElement)) { ev.preventDefault(); first.focus(); }
+    });
+    // Any [data-open-support] control opens it (header button, billing note).
+    document.addEventListener('click', function (ev) {
+      var t = ev.target.closest && ev.target.closest('[data-open-support]');
+      if (t) { ev.preventDefault(); open(t); }
+    });
+
     form.addEventListener('submit', function (ev) {
       ev.preventDefault();
       var text = message.value.trim();
-      if (!text) { status.className = 'error'; status.textContent = 'Please write a message.'; return; }
+      if (!text) { status.className = 'error pop__status'; status.textContent = 'Please write a message.'; message.focus(); return; }
       button.disabled = true;
-      status.className = 'muted small';
+      status.className = 'muted small pop__status';
       status.textContent = 'Sending…';
       fetch('/app/support', {
         method: 'POST', credentials: 'same-origin',
@@ -195,25 +262,22 @@
       })
         .then(function (r) {
           if (r.status === 401) { location.href = '/login'; return null; }
-          return r.json().then(function (d) { return { ok: r.ok, data: d }; });
+          return r.json().catch(function () { return {}; }).then(function (d) { return { ok: r.ok, data: d }; });
         })
         .then(function (res) {
           if (!res) return;
           if (!res.ok) throw new Error((res.data && res.data.error) || 'We could not send that. Please try again.');
           subject.value = ''; message.value = '';
-          status.className = 'notice';
+          status.className = 'notice pop__status';
           status.textContent = 'Thanks. Your message is with our team and we will reply by email.';
         })
         .catch(function (err) {
-          status.className = 'error';
+          status.className = 'error pop__status';
           status.textContent = err.message || 'We could not send that. Please try again.';
         })
         .then(function () { button.disabled = false; });
     });
-    return el('section', { class: 'glass pad support__box', 'aria-labelledby': 'support-title' },
-      el('h2', { id: 'support-title', class: 'support__title' }, 'Message AE support'),
-      el('p', { class: 'muted' }, 'Have a question about a service or your bill? Send us a message here and our team will see it.'),
-      form);
+    document.body.appendChild(pop);
   }
 
   function load() {
@@ -229,8 +293,9 @@
       });
   }
 
-  app.replaceChildren(live, renderSupport());
+  app.replaceChildren(live);
   live.replaceChildren(el('p', { class: 'muted', id: 'loading' }, 'Loading your dashboard…'));
+  buildSupport();
   load();
   setInterval(load, 60000); // keep the feed fresh without a reload
 })();

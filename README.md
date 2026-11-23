@@ -95,7 +95,8 @@ src/services.js      17 services, event types, status rules
 src/store.js         all queries             src/api.js       Bearer API + Telnyx stub
 src/web.js           login/logout/reset/dashboard/support/admin   src/views.js   HTML pages
 src/telnyx.js        Ed25519 verification + direct Telnyx receiver
-public/              style.css, app.js       scripts/         seed.js, manage.js, telnyx-relay.js, send-password-reminders.js, purchase-fulfillment.js
+public/              style.css (glass theme), app.js, motion.js
+scripts/             seed.js, manage.js, telnyx-relay.js, send-password-reminders.js, purchase-fulfillment.js
 tests/               smoke.test.js, purchase-fulfillment.test.js
 ```
 
@@ -109,6 +110,10 @@ tests/               smoke.test.js, purchase-fulfillment.test.js
 - Phone numbers: anything that looks like a phone number in `title`, `detail` or metadata strings is masked to the last four digits **before storage**; metadata keys such as `phone`, `number`, `card`, `password`, `token`, `caller` are dropped.
 - API access log (key label, endpoint, status, time; no bodies) is in table `api_access_log`.
 - Strict CSP (no inline scripts or styles), no third-party assets.
+
+## Look and motion
+
+Same glass system as aesoftwaresolutions.com (`assets/refresh/ae-v5.css`, `assets/js/ae-motion.js`): slow animated background, frosted glass cards, header that turns to glass after 8px of scroll, a sticky glass jump bar with the gliding pill, hover lift with a pointer spotlight on cards, magnetic buttons, cursor glow, one fade up reveal, and the glass card popup (used for "Message AE": centred card on desktop, bottom sheet on phones). All motion is off for reduced motion (`html.ae-calm`) and nothing depends on it. `public/motion.js` holds the effects; it uses no inline code, so the strict CSP stays as is.
 - Telnyx direct webhook: Ed25519 signature over the raw body, 300 s replay window, event id de-duplication, fails closed with no key. Failed signatures are rate limited per IP.
 - Billing: only the last 4 card digits can be stored (database CHECK). Stripe ids are never sent to the browser. Invoice PDF links must be https.
 - Support messages are stored as typed (they are NOT phone masked, so a client can leave a callback number) and always escaped on output.
