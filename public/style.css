@@ -1,81 +1,181 @@
-/* AE Client Dashboard theme: near-black, white text, glass cards, black and white only. */
+/* AE Client Dashboard theme. Same glass system as aesoftwaresolutions.com
+   (assets/refresh/ae-v5.css): page #0A0A0B under a slow animated background,
+   white text, frosted glass cards, black and white only. Motion lives in
+   public/motion.js and is off for reduced motion (html.ae-calm). */
 :root {
-  --bg: #0a0a0a;
+  --paper: #0A0A0B;
+  --bg: var(--paper);
   --text: #ffffff;
-  --muted: rgba(255, 255, 255, 0.62);
-  --line: rgba(255, 255, 255, 0.12);
-  --glass: rgba(255, 255, 255, 0.045);
-  --glass-strong: rgba(255, 255, 255, 0.08);
+  --ink-70: rgba(255, 255, 255, .84);   /* secondary text */
+  --muted: rgba(255, 255, 255, .74);    /* tertiary text, the lightest allowed for text */
+  --line: rgba(255, 255, 255, .16);
+  --line-strong: rgba(255, 255, 255, .34);
+  --glass: rgba(255, 255, 255, .045);
+  --glass-strong: rgba(255, 255, 255, .08);
+  --glass-line: rgba(255, 255, 255, .15);
+  --error: #FF9A8A;                     /* form errors only, readable on dark */
+  --error-tint: rgba(255, 154, 138, .10);
+  --error-line: rgba(255, 154, 138, .5);
   --radius: 16px;
-  --font: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --header-h: 64px;
+  --ease: cubic-bezier(.18, .66, .18, 1);
+  --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', system-ui, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
 }
 * { box-sizing: border-box; }
-html { color-scheme: dark; }
-body {
-  margin: 0; min-height: 100vh; background: var(--bg); color: var(--text);
-  font-family: var(--font); line-height: 1.5; -webkit-font-smoothing: antialiased;
-  /* faint white radial glow so the glass has something to blur */
-  background-image: radial-gradient(900px 500px at 15% -10%, rgba(255,255,255,0.07), transparent 60%),
-                    radial-gradient(700px 400px at 100% 0%, rgba(255,255,255,0.04), transparent 60%);
-  background-attachment: fixed;
+html {
+  background: var(--bg); color: var(--text); color-scheme: dark; overflow-x: clip;
+  scroll-behavior: smooth; scroll-padding-top: calc(var(--header-h) + 72px);
 }
+body {
+  margin: 0; min-height: 100vh; background: transparent; color: var(--text);
+  font-family: var(--font); line-height: 1.55; -webkit-font-smoothing: antialiased; overflow-x: clip;
+}
+body, input, textarea, select, button { font-family: var(--font); }
+::selection { background: #ffffff; color: #0A0A0B; }
+::placeholder { color: rgba(255, 255, 255, .62); opacity: 1; }
+
+/* Animated background: soft neutral light pools drifting on near black (as on the site). */
+body::before {
+  content: ''; position: fixed; inset: -25vmax; z-index: -1; pointer-events: none;
+  background:
+    radial-gradient(38vmax 38vmax at 18% 22%, rgba(255, 255, 255, .11), transparent 62%),
+    radial-gradient(34vmax 34vmax at 82% 14%, rgba(255, 255, 255, .08), transparent 62%),
+    radial-gradient(44vmax 44vmax at 68% 82%, rgba(255, 255, 255, .09), transparent 62%),
+    radial-gradient(30vmax 30vmax at 8% 88%, rgba(255, 255, 255, .07), transparent 62%);
+  animation: ae-drift 38s ease-in-out infinite alternate;
+  will-change: transform;
+}
+@keyframes ae-drift {
+  0%   { transform: translate3d(0, 0, 0) rotate(0deg) scale(1); }
+  50%  { transform: translate3d(3vw, -2vh, 0) rotate(7deg) scale(1.1); }
+  100% { transform: translate3d(-3vw, 3vh, 0) rotate(-6deg) scale(1.03); }
+}
+
 a { color: var(--text); text-underline-offset: 3px; }
-h1 { font-size: 1.5rem; font-weight: 600; margin: 0 0 1rem; letter-spacing: -0.01em; }
-h2 { font-size: 1.1rem; font-weight: 600; margin: 2.2rem 0 0.9rem; letter-spacing: -0.01em; }
+h1 { font-size: 1.6rem; font-weight: 600; margin: 0 0 1rem; letter-spacing: -0.02em; line-height: 1.2; }
+h2 { font-size: 1.15rem; font-weight: 600; margin: 2.4rem 0 1rem; letter-spacing: -0.01em; }
 code { background: var(--glass-strong); padding: 0.1em 0.4em; border-radius: 6px; }
 .muted { color: var(--muted); }
 .small { font-size: 0.85rem; }
 .brand { font-size: 0.78rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin: 0; }
-/* AE logo mark on auth pages (login / reset / forgot). */
 .brand__logo { display: block; width: 48px; height: 48px; margin-bottom: 0.9rem; }
-/* AE logo mark in the dashboard topbar. */
-.topbar__brand { display: flex; align-items: center; gap: 0.6rem; }
-.topbar__logo { width: 30px; height: 30px; flex: none; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
+/* ---- Glass cards: the site recipe (blur, saturate, hairline, top highlight, soft drop) ---- */
 .glass {
-  background: var(--glass); border: 1px solid var(--line); border-radius: var(--radius);
-  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  position: relative;
+  background: var(--glass); border: 1px solid var(--glass-line); border-radius: var(--radius);
+  -webkit-backdrop-filter: blur(14px) saturate(130%); backdrop-filter: blur(14px) saturate(130%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 10px 34px rgba(0, 0, 0, .38);
 }
 .pad { padding: 1.5rem; }
 
 /* ---- Buttons and forms ---- */
 .btn {
   font: inherit; font-weight: 600; cursor: pointer; border-radius: 999px; padding: 0.7rem 1.4rem;
-  background: var(--text); color: var(--bg); border: 1px solid var(--text);
+  background: #ffffff; color: #0A0A0B; border: 1px solid #ffffff;
+  translate: var(--mx, 0) var(--my, 0);   /* magnetic lean (motion.js) */
+  transition-property: translate, scale, background-color, color, border-color, box-shadow, opacity;
+  transition-duration: .2s; transition-timing-function: var(--ease);
 }
-.btn:hover { background: rgba(255,255,255,0.85); }
-.btn--ghost { background: transparent; color: var(--text); border-color: var(--line); padding: 0.45rem 1rem; font-weight: 500; }
-.btn--ghost:hover { background: var(--glass-strong); }
+.btn:hover { background: rgba(255, 255, 255, .86); }
+.btn:active { scale: .97; box-shadow: 0 0 0 4px rgba(255, 255, 255, .12); transition-duration: .08s; }
+.btn.is-magnet-out { transition-duration: .4s; }
+.btn:disabled { opacity: 0.6; cursor: progress; }
+/* Ghost buttons are glass with white text, like the site's header CTA. */
+.btn--ghost {
+  background: rgba(255, 255, 255, .09); color: var(--text); border-color: rgba(255, 255, 255, .16);
+  padding: 0.45rem 1rem; font-weight: 500;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .4), inset 0 1px 0 rgba(255, 255, 255, .12);
+  -webkit-backdrop-filter: saturate(140%) blur(14px); backdrop-filter: saturate(140%) blur(14px);
+}
+.btn--ghost:hover { background: #ffffff; color: #0A0A0B; border-color: #ffffff; }
+.linklike { font: inherit; color: var(--text); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 :focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
 .form { display: grid; gap: 1rem; }
-.form label { display: grid; gap: 0.4rem; font-size: 0.9rem; color: var(--muted); }
-.form input {
-  font: inherit; color: var(--text); background: rgba(0,0,0,0.4); border: 1px solid var(--line);
-  border-radius: 10px; padding: 0.7rem 0.85rem;
+.form label { display: grid; gap: 0.4rem; font-size: 0.9rem; color: var(--ink-70); }
+.form input, .form textarea {
+  font: inherit; color: var(--text); background: rgba(255, 255, 255, .06); border: 1px solid var(--line-strong);
+  border-radius: 10px; padding: 0.7rem 0.85rem; color-scheme: dark;
+  transition: border-color .2s var(--ease), background-color .2s var(--ease), box-shadow .2s var(--ease);
 }
-.form input:focus { outline: none; border-color: var(--text); }
-.form textarea {
-  font: inherit; color: var(--text); background: rgba(0,0,0,0.4); border: 1px solid var(--line);
-  border-radius: 10px; padding: 0.7rem 0.85rem; resize: vertical; min-height: 7rem;
-}
-.form textarea:focus { outline: none; border-color: var(--text); }
-.btn:disabled { opacity: 0.6; cursor: progress; }
-.error, .notice { border: 1px solid var(--line); border-radius: 10px; padding: 0.7rem 0.9rem; margin: 0 0 1rem; font-size: 0.92rem; }
-.error { border-color: rgba(255,255,255,0.5); }
-.error::before { content: "! "; font-weight: 700; }
+.form textarea { resize: vertical; min-height: 7rem; }
+.form input:focus, .form textarea:focus { outline: none; border-color: var(--text); box-shadow: 0 0 0 3px rgba(255, 255, 255, .12); }
+.error, .notice { border: 1px solid var(--line); border-radius: 10px; padding: 0.7rem 0.9rem; margin: 0 0 1rem; font-size: 0.92rem; background: var(--glass); }
+.error { color: var(--error); border-color: var(--error-line); background: var(--error-tint); }
 
 /* ---- Auth pages ---- */
 .auth { min-height: 100vh; display: grid; place-items: center; padding: 1.5rem; }
-.auth__card { width: min(420px, 100%); padding: 2rem; }
+.auth__card { width: min(420px, 100%); padding: 2rem; border-radius: 24px; }
 .auth__card .brand { margin-bottom: 1.2rem; }
 
-/* ---- Dashboard ---- */
+/* ---- Header: transparent at the top, dark frosted glass after 8px of scroll ---- */
 .topbar {
+  position: sticky; top: 0; z-index: 1000; min-height: var(--header-h);
   display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap;
-  padding: 1rem clamp(1rem, 4vw, 2.5rem); border-bottom: 1px solid var(--line);
+  padding: 0.6rem clamp(1rem, 4vw, 2.5rem);
+  background: transparent; border-bottom: 1px solid transparent;
+  transition: background-color .25s var(--ease), border-color .25s var(--ease), box-shadow .25s var(--ease), backdrop-filter .25s var(--ease), -webkit-backdrop-filter .25s var(--ease);
 }
-.topbar__name { margin-left: 1rem; font-weight: 600; }
-.wrap { width: min(1100px, 100%); margin: 0 auto; padding: 1.5rem clamp(1rem, 4vw, 2.5rem) 4rem; }
+.topbar.is-scrolled { background: rgba(10, 10, 11, .94); border-bottom-color: rgba(255, 255, 255, .10); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08); }
+@supports ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+  .topbar.is-scrolled {
+    background: rgba(10, 10, 11, .86);
+    -webkit-backdrop-filter: brightness(.42) saturate(160%) blur(28px);
+    backdrop-filter: brightness(.42) saturate(160%) blur(28px);
+  }
+}
+.topbar__brand { display: flex; align-items: center; gap: 0.6rem; min-width: 0; flex: 1 1 auto; }
+.topbar__logo { width: 30px; height: 30px; flex: none; }
+.topbar__name { margin-left: 1rem; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar__actions { display: flex; align-items: center; gap: 0.6rem; }
+.topbar__actions form { margin: 0; }
+/* Phones: one row, so the sticky jump bar below always sits flush under it.
+   The wordmark text goes (the logo stays) and the buttons get compact. */
+@media (max-width: 640px) {
+  .topbar { flex-wrap: nowrap; gap: 0.6rem; padding: 0.6rem 1rem; }
+  .topbar__brand .brand { display: none; }
+  .topbar__name { margin-left: 0.15rem; font-size: 0.95rem; }
+  .topbar__actions { flex: none; gap: 0.4rem; }
+  .topbar .btn--ghost { padding: 0.4rem 0.75rem; font-size: 0.88rem; }
+}
+
+/* ---- Jump bar with the gliding glass pill (site: .ae-jump + .ae-navpill) ---- */
+.jump {
+  position: sticky; top: var(--header-h); z-index: 900;
+  background: rgba(10, 10, 11, .8);
+  -webkit-backdrop-filter: blur(20px) saturate(150%); backdrop-filter: blur(20px) saturate(150%);
+  border-top: 1px solid rgba(255, 255, 255, .08); border-bottom: 1px solid rgba(255, 255, 255, .08);
+}
+.jump__inner {
+  position: relative; width: min(1100px, 100%); margin: 0 auto; padding: 0.45rem clamp(1rem, 4vw, 2.5rem);
+  display: flex; gap: 0.35rem; overflow-x: auto; scrollbar-width: none;
+}
+.jump__inner::-webkit-scrollbar { display: none; }
+.jump__link {
+  position: relative; z-index: 1; flex: none; display: inline-flex; align-items: center; min-height: 36px;
+  padding: 0 0.95rem; border-radius: 999px; font-size: 0.92rem; font-weight: 600; color: var(--ink-70);
+  text-decoration: none; white-space: nowrap; transition: color .25s var(--ease);
+}
+.jump__link:hover, .jump__link.is-lit, .jump__link[aria-current] { color: var(--text); }
+/* Without JS the current link still reads as current. */
+html:not(.ae-pill-on) .jump__link[aria-current] { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .16); background: rgba(255, 255, 255, .06); }
+.jump__pill {
+  position: absolute; left: 0; top: 0; z-index: 0; pointer-events: none; opacity: 0;
+  width: var(--pw, 0); height: var(--ph, 0); transform: translate3d(var(--px, 0), var(--py, 0), 0);
+  background: rgba(40, 40, 44, .6); border: 1px solid rgba(255, 255, 255, .16); border-radius: 999px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .4), inset 0 1px 0 rgba(255, 255, 255, .12);
+  transition: transform .38s var(--ease), width .38s var(--ease), height .38s var(--ease), opacity .2s var(--ease);
+}
+@supports (backdrop-filter: blur(1px)) {
+  .jump__pill { background: rgba(255, 255, 255, .09); backdrop-filter: saturate(140%) blur(14px); -webkit-backdrop-filter: saturate(140%) blur(14px); }
+}
+.jump__pill.is-on { opacity: 1; }
+.jump__pill.is-still { transition: none; }
+
+/* ---- Dashboard ---- */
+.wrap { width: min(1100px, 100%); margin: 0 auto; padding: 1.75rem clamp(1rem, 4vw, 2.5rem) 4rem; }
+/* Jump offset comes from html scroll-padding-top alone (a scroll-margin here would add to it). */
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 1rem; }
 .card { padding: 1.25rem; display: flex; flex-direction: column; gap: 0.75rem; }
 .card__head { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.75rem; }
@@ -84,12 +184,33 @@ code { background: var(--glass-strong); padding: 0.1em 0.4em; border-radius: 6px
 .card__update { margin: 0; }
 .card__when { color: var(--muted); font-size: 0.82rem; display: block; }
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 0.6rem; margin: 0; padding: 0; list-style: none; }
-.stats li { background: var(--glass-strong); border-radius: 10px; padding: 0.55rem 0.7rem; }
+.stats li { background: var(--glass-strong); border: 1px solid rgba(255, 255, 255, .06); border-radius: 10px; padding: 0.55rem 0.7rem; }
 .stats strong { display: block; font-size: 1.4rem; line-height: 1.2; }
 .stats span { color: var(--muted); font-size: 0.78rem; }
 .calls { margin: 0; padding: 0; list-style: none; display: grid; gap: 0.5rem; border-top: 1px solid var(--line); padding-top: 0.75rem; }
 .calls li { font-size: 0.88rem; }
 .calls .card__when { display: block; }
+
+/* Card hover: gentle lift, soft light edge, and a faint spotlight that follows the pointer
+   (motion.js sets --sx and --sy). Fine pointers only, never under reduced motion. */
+.card::after {
+  content: ''; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; opacity: 0;
+  background: radial-gradient(360px circle at var(--sx, 50%) var(--sy, 0%), rgba(255, 255, 255, .075), transparent 62%);
+  transition: opacity .3s var(--ease);
+}
+@media (hover: hover) and (pointer: fine) {
+  html:not(.ae-calm) .card {
+    transition: opacity .4s var(--ease) var(--delay, 0s), transform .4s var(--ease) var(--delay, 0s),
+                box-shadow .28s var(--ease), border-color .28s var(--ease), background-color .28s var(--ease);
+  }
+  html:not(.ae-calm) .card:hover {
+    transform: translateY(-4px);
+    transition: transform .28s var(--ease), box-shadow .28s var(--ease), border-color .28s var(--ease), background-color .28s var(--ease);
+    background: var(--glass-strong); border-color: var(--line-strong);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12), 0 22px 54px rgba(0, 0, 0, .48), 0 0 0 1px rgba(255, 255, 255, .14), 0 0 46px rgba(255, 255, 255, .07);
+  }
+  html:not(.ae-calm) .card:hover::after { opacity: 1; }
+}
 
 /* Status pills: black and white only. Shape and fill carry the meaning, not colour. */
 .pill { white-space: nowrap; font-size: 0.76rem; font-weight: 600; border-radius: 999px; padding: 0.22rem 0.7rem; border: 1px solid var(--text); }
@@ -105,7 +226,7 @@ code { background: var(--glass-strong); padding: 0.1em 0.4em; border-radius: 6px
 .feed li { display: grid; grid-template-columns: 9.5rem 1fr; gap: 0.25rem 1rem; padding: 0.9rem 1.25rem; border-bottom: 1px solid var(--line); }
 .feed li:last-child { border-bottom: 0; }
 .feed__meta { display: grid; gap: 0.3rem; align-content: start; font-size: 0.8rem; color: var(--muted); }
-.tag { justify-self: start; border: 1px solid var(--line); border-radius: 999px; padding: 0.05rem 0.55rem; color: var(--text); font-size: 0.72rem; }
+.tag { justify-self: start; border: 1px solid var(--line); border-radius: 999px; padding: 0.05rem 0.55rem; color: var(--text); font-size: 0.72rem; background: rgba(255, 255, 255, .04); }
 .feed__title { margin: 0; font-weight: 600; }
 .feed__detail { margin: 0.15rem 0 0; color: var(--muted); font-size: 0.9rem; }
 .empty { padding: 1.5rem; color: var(--muted); }
@@ -125,13 +246,81 @@ code { background: var(--glass-strong); padding: 0.1em 0.4em; border-radius: 6px
 .billing__list li { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding: 0.6rem 0; border-top: 1px solid var(--line); }
 .billing__right { display: flex; align-items: center; gap: 0.75rem; font-size: 0.85rem; }
 
-/* ---- Support form ---- */
-.support__box { margin-top: 2.2rem; }
-.support__title { margin-top: 0; }
-.support { margin-top: 1rem; max-width: 640px; }
+/* ---- Glass card popup (site: .ae-pop). Desktop: a centred frosted card that settles in.
+   Phones: a bottom sheet. The scrim has no backdrop-filter so the card blurs the page itself. ---- */
+html.ae-pop-lock { overflow: hidden; }
+.topbar, .jump, .wrap { transition: filter .3s var(--ease); }
+html.ae-pop-lock .topbar, html.ae-pop-lock .jump, html.ae-pop-lock .wrap { filter: blur(8px); }
+.pop {
+  position: fixed; inset: 0; z-index: 100000; display: flex; align-items: center; justify-content: center;
+  padding: 24px; overflow: hidden; background: rgba(4, 4, 6, 0); transition: background-color .22s var(--ease);
+}
+.pop[hidden] { display: none; }
+.pop.is-open { background: rgba(4, 4, 6, .58); }
+.pop__card {
+  position: relative; display: flex; flex-direction: column; width: 100%; max-width: 560px;
+  max-height: calc(100dvh - 48px); overflow: auto; padding: 1.75rem; border-radius: 24px;
+  background: rgba(22, 22, 26, .62);
+  border: 1px solid rgba(255, 255, 255, .22); border-top-color: rgba(255, 255, 255, .34);
+  -webkit-backdrop-filter: blur(28px) saturate(160%); backdrop-filter: blur(28px) saturate(160%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12), 0 30px 80px rgba(0, 0, 0, .55);
+  color: var(--text); outline: none; opacity: 0; transform: translateY(14px) scale(.97);
+  transition: opacity .2s var(--ease), transform .2s var(--ease);
+}
+.pop.is-open .pop__card { opacity: 1; transform: none; }
+.pop__eyebrow { margin: 0 0 0.4rem; }
+.pop__title { margin: 0 2.5rem 0.5rem 0; font-size: 1.4rem; }
+.pop__lead { margin: 0 0 1.25rem; color: var(--ink-70); }
+.pop__close {
+  position: absolute; top: 14px; right: 14px; width: 36px; height: 36px; border-radius: 50%;
+  display: grid; place-items: center; cursor: pointer; font: inherit; font-size: 1.25rem; line-height: 1;
+  color: var(--text); background: rgba(255, 255, 255, .08); border: 1px solid rgba(255, 255, 255, .16);
+  transition: background-color .2s var(--ease), transform .2s var(--ease);
+}
+.pop__close:hover { background: rgba(255, 255, 255, .16); transform: rotate(90deg); }
+.pop__status:empty { display: none; }
+@media (max-width: 640px) {
+  .pop { align-items: flex-end; padding: 0; }
+  .pop__card { max-width: none; border-radius: 24px 24px 0 0; max-height: 92dvh; transform: translateY(100%); padding-bottom: calc(1.75rem + env(safe-area-inset-bottom)); }
+  .pop.is-open .pop__card { transform: none; transition-duration: .32s; }
+}
 
 /* ---- Admin view (AE staff) ---- */
 .admin__services { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.45rem; border-top: 1px solid var(--line); padding-top: 0.6rem; }
 .admin__services li { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; font-size: 0.9rem; }
 .admin__message { white-space: pre-wrap; overflow-wrap: anywhere; }
 .admin__handled { margin-top: 0.6rem; }
+
+/* ---- Reveal: one fade up, once. Never hides content without JS (motion.js sets ae-js). ---- */
+html.ae-js:not(.ae-calm) [data-reveal]:not(.is-revealed) { opacity: 0; transform: translateY(12px); }
+[data-reveal] { transition: opacity .4s var(--ease) var(--delay, 0s), transform .4s var(--ease) var(--delay, 0s); }
+.is-revealed[data-reveal] { opacity: 1; transform: none; }
+
+/* ---- Cursor glow: a faint white light that trails a fine pointer ---- */
+.ae-glow {
+  position: fixed; left: 0; top: 0; width: 520px; height: 520px; margin: -260px 0 0 -260px;
+  border-radius: 50%; pointer-events: none; z-index: 0; opacity: 0;
+  background: radial-gradient(circle, rgba(255, 255, 255, .07) 0%, rgba(255, 255, 255, 0) 65%);
+  transform: translate3d(var(--gx, -999px), var(--gy, -999px), 0);
+  transition: opacity .4s var(--ease);
+}
+.ae-glow.is-on { opacity: 1; }
+
+/* ---- Reduced motion: nothing moves, content is just there ---- */
+html.ae-calm *, html.ae-calm *::before, html.ae-calm *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+html.ae-calm body::before { animation: none; }
+html.ae-calm .btn { translate: none; }
+html.ae-calm .ae-glow { display: none !important; }
+html.ae-calm [data-reveal] { opacity: 1 !important; transform: none !important; }
+html.ae-calm .pop__card, html.ae-calm .pop.is-open .pop__card { transform: none !important; opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; scroll-behavior: auto !important; }
+  body::before { animation: none; }
+  .btn { translate: none; }
+  .btn:active { scale: 1; }
+  .ae-glow { display: none !important; }
+  [data-reveal] { opacity: 1 !important; transform: none !important; }
+  .pop__card, .pop.is-open .pop__card { transform: none !important; opacity: 1; }
+  .pop__close:hover { transform: none; }
+}

@@ -18,6 +18,7 @@ function layout(title, body, { script } = {}) {
 </head>
 <body>
 ${body}
+<script src="/static/motion.js" defer></script>
 ${script ? `<script src="${script}" defer></script>` : ''}
 </body>
 </html>`;
@@ -27,7 +28,7 @@ const csrfField = (t) => `<input type="hidden" name="_csrf" value="${esc(t)}">`;
 
 /** Centered glass card used by login / reset pages. */
 function authPage(title, inner) {
-  return layout(title, `<main class="auth"><div class="glass auth__card">
+  return layout(title, `<main class="auth"><div class="glass auth__card" data-reveal>
 <img src="${LOGO_MARK}" alt="AE Software Solutions" class="brand__logo" width="48" height="48">
 <p class="brand">AE Software Solutions</p>
 <h1>${esc(title)}</h1>
@@ -77,17 +78,24 @@ function messagePage(title, text) {
   return authPage(title, `<p>${esc(text)}</p><p class="muted"><a href="/login">Back to sign in</a></p>`);
 }
 
-/** Header with sign-out (spec 3: log out on every page). */
-function header(name, csrf) {
+/** Header with sign out (spec 3: log out on every page). `actions` is trusted markup. */
+function header(name, csrf, actions = '') {
   return `<header class="topbar">
   <div class="topbar__brand"><img src="${LOGO_MARK}" alt="AE Software Solutions" class="topbar__logo" width="30" height="30"><span class="brand">AE Software Solutions</span><span class="topbar__name">${esc(name)}</span></div>
-  <form method="post" action="/logout">${csrfField(csrf)}<button class="btn btn--ghost" type="submit">Sign out</button></form>
+  <div class="topbar__actions">${actions}<form method="post" action="/logout">${csrfField(csrf)}<button class="btn btn--ghost" type="submit">Sign out</button></form></div>
 </header>`;
 }
 
+/** Sticky glass jump bar; motion.js adds the gliding pill. links: [[href, label], ...] */
+function jumpBar(label, links) {
+  return `<nav class="jump" aria-label="${esc(label)}"><div class="jump__inner">${links
+    .map(([href, text], i) => `<a class="jump__link" href="${esc(href)}"${i === 0 ? ' aria-current="true"' : ''}>${esc(text)}</a>`).join('')}</div></nav>`;
+}
+
 function dashboardPage({ businessName, csrf }) {
-  return layout('Dashboard', `${header(businessName, csrf)}
-<main class="wrap" id="app" aria-live="polite">
+  return layout('Dashboard', `${header(businessName, csrf, '<button class="btn btn--ghost" type="button" data-open-support aria-haspopup="dialog">Message AE</button>')}
+${jumpBar('Dashboard sections', [['#services', 'Services'], ['#activity', 'Activity'], ['#billing', 'Billing']])}
+<main class="wrap" id="app">
   <noscript><p class="notice">Please turn on JavaScript to see your dashboard.</p></noscript>
   <p class="muted" id="loading">Loading your dashboard…</p>
 </main>`, { script: '/static/app.js' });
@@ -111,7 +119,7 @@ function adminPage({ email, csrf, clients = [], messages = [], fulfillments = []
   const open = messages.filter((m) => m.status === 'open').length;
   const pendingSales = fulfillments.filter((f) => f.status === 'pending' || f.status === 'unknown-product');
   const saleRows = fulfillments.length ? fulfillments.map((f) => `
-<article class="glass card admin__client">
+<article class="glass card admin__client" data-reveal>
   <div class="card__head">
     <div><h3 class="card__name">${esc(f.product || 'Unknown product')} · ${esc(f.amount_label || '')}</h3>
     <p class="card__plan">${esc((f.buyer && f.buyer.name) || '')}${f.buyer && f.buyer.name ? ' · ' : ''}${esc((f.buyer && f.buyer.email) || '')}</p>
@@ -122,9 +130,9 @@ function adminPage({ email, csrf, clients = [], messages = [], fulfillments = []
   ${f.status === 'pending' || f.status === 'unknown-product'
     ? `<form method="post" action="/admin/fulfillment/${esc(f.charge_id)}/handled" class="admin__handled">${csrfField(csrf)}<button class="btn btn--ghost" type="submit">Mark fulfilled</button></form>`
     : `<p class="muted small">Handled ${esc(fmtDate(f.handled_at, true))}</p>`}
-</article>`).join('') : '<div class="glass empty">No sales yet. The fulfillment watcher writes new purchases here.</div>';
+</article>`).join('') : '<div class="glass empty" data-reveal>No sales yet. The fulfillment watcher writes new purchases here.</div>';
   const clientRows = clients.length ? clients.map((c) => `
-<article class="glass card admin__client">
+<article class="glass card admin__client" data-reveal>
   <div class="card__head">
     <div><h3 class="card__name">${esc(c.business_name)}</h3>
     <p class="card__plan">${esc(c.contact_name || '')}${c.contact_name ? ' · ' : ''}${esc(c.email)}</p>
@@ -136,9 +144,9 @@ function adminPage({ email, csrf, clients = [], messages = [], fulfillments = []
     <li><span>${esc(s.name)}${s.plan ? ` <span class="muted small">${esc(s.plan)}</span>` : ''}</span>
     <span class="pill pill--${esc(s.status)}">${esc(s.status_label)}</span></li>`).join('')}</ul>`
     : '<p class="muted small">No services yet.</p>'}
-</article>`).join('') : '<div class="glass empty">No clients yet. Use <code>npm run manage</code> to create one.</div>';
+</article>`).join('') : '<div class="glass empty" data-reveal>No clients yet. Use <code>npm run manage</code> to create one.</div>';
 
-  const messageRows = messages.length ? `<ol class="glass feed">${messages.map((m) => `
+  const messageRows = messages.length ? `<ol class="glass feed" data-reveal>${messages.map((m) => `
   <li>
     <div class="feed__meta"><span>${esc(fmtDate(m.created_at, true))}</span><span class="tag">${m.status === 'open' ? 'Open' : 'Handled'}</span></div>
     <div>
@@ -148,18 +156,23 @@ function adminPage({ email, csrf, clients = [], messages = [], fulfillments = []
         ? `<form method="post" action="/admin/support/${esc(m.id)}/handled" class="admin__handled">${csrfField(csrf)}<button class="btn btn--ghost" type="submit">Mark handled</button></form>`
         : `<p class="muted small">Handled ${esc(fmtDate(m.handled_at, true))}</p>`}
     </div>
-  </li>`).join('')}</ol>` : '<div class="glass empty">No messages yet.</div>';
+  </li>`).join('')}</ol>` : '<div class="glass empty" data-reveal>No messages yet.</div>';
 
   return layout('Admin', `${header('AE Admin', csrf)}
+${jumpBar('Admin sections', [
+    ['#sales', `New sales${pendingSales.length ? ` (${pendingSales.length})` : ''}`],
+    ['#clients', 'Clients'],
+    ['#support', `Support messages${open ? ` (${open})` : ''}`],
+  ])}
 <main class="wrap">
   ${notice(info)}
   <p class="muted small">Signed in as ${esc(email)} (AE staff)</p>
-  <h1>New sales${pendingSales.length ? ` (${pendingSales.length} pending)` : ''}</h1>
-  <section class="cards">${saleRows}</section>
-  <h1>Clients</h1>
-  <section class="cards">${clientRows}</section>
-  <h2>Support messages${open ? ` (${open} open)` : ''}</h2>
-  ${messageRows}
+  <section id="sales" class="section"><h1>New sales${pendingSales.length ? ` (${pendingSales.length} pending)` : ''}</h1>
+  <div class="cards" data-stagger>${saleRows}</div></section>
+  <section id="clients" class="section"><h1>Clients</h1>
+  <div class="cards" data-stagger>${clientRows}</div></section>
+  <section id="support" class="section"><h2>Support messages${open ? ` (${open} open)` : ''}</h2>
+  ${messageRows}</section>
 </main>`);
 }
 

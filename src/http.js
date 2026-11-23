@@ -85,8 +85,12 @@ function checkCsrf(req, body) {
   return !!cookie && typeof body._csrf === 'string' && safeEqual(cookie, body._csrf);
 }
 
-// ---- Static files (only the two public assets) ----
-const STATIC = { '/static/style.css': 'text/css; charset=utf-8', '/static/app.js': 'text/javascript; charset=utf-8' };
+// ---- Static files (only the listed public assets) ----
+const STATIC = {
+  '/static/style.css': 'text/css; charset=utf-8',
+  '/static/app.js': 'text/javascript; charset=utf-8',
+  '/static/motion.js': 'text/javascript; charset=utf-8',
+};
 function serveStatic(res, pathname) {
   const type = STATIC[pathname];
   if (!type) return false;
