@@ -204,6 +204,39 @@ CREATE TABLE IF NOT EXISTS support_messages (
   handled_by  TEXT REFERENCES users(id)
 );
 CREATE INDEX IF NOT EXISTS idx_support_messages_time ON support_messages (status, created_at DESC);
+
+-- Telnyx active sync (src/telnyx-sync.js). Filled from read-only Telnyx API GETs.
+-- Phone numbers here are AE-owned Telnyx numbers, not caller numbers; they are
+-- still masked whenever they are shown.
+CREATE TABLE IF NOT EXISTS telnyx_numbers (
+  id              TEXT,                               -- Telnyx phone number id
+  phone_number    TEXT UNIQUE NOT NULL,
+  status          TEXT,
+  connection_id   TEXT,                               -- TeXML application id
+  voice_url       TEXT,                               -- from the TeXML application
+  status_callback TEXT,                               -- from the TeXML application
+  purchased_at    TEXT,
+  last_synced_at  TEXT
+);
+
+-- Single row (id = 1): the Telnyx account balance from GET /v2/balance.
+CREATE TABLE IF NOT EXISTS telnyx_account (
+  id            INTEGER PRIMARY KEY CHECK (id = 1),
+  balance_cents INTEGER,
+  currency      TEXT,
+  updated_at    TEXT
+);
+
+-- Single row (id = 1): outcome of the most recent Telnyx sync.
+CREATE TABLE IF NOT EXISTS telnyx_sync_state (
+  id                   INTEGER PRIMARY KEY CHECK (id = 1),
+  last_sync_at         TEXT,
+  last_success_at      TEXT,
+  last_error           TEXT,
+  assistants_synced    INTEGER,
+  conversations_synced INTEGER,
+  numbers_synced       INTEGER
+);
 `);
 
 // ---- Migrations for databases created before a schema change ----------------
@@ -220,6 +253,19 @@ CREATE INDEX IF NOT EXISTS idx_support_messages_time ON support_messages (status
 {
   const cols = new Set(db.prepare('PRAGMA table_info(invoices)').all().map((c) => c.name));
   if (!cols.has('issued_at')) db.exec('ALTER TABLE invoices ADD COLUMN issued_at TEXT');
+}
+// Telnyx active sync: assistant details on telnyx_agents (NULL until the first sync).
+{
+  const cols = new Set(db.prepare('PRAGMA table_info(telnyx_agents)').all().map((c) => c.name));
+  for (const col of ['name', 'model', 'tools_json', 'instructions_hash', 'last_synced_at']) {
+    if (!cols.has(col)) db.exec(`ALTER TABLE telnyx_agents ADD COLUMN ${col} TEXT`);
+  }
+}
+// Telnyx active sync: caller number (masked on display) and the transfer flag on call_summaries.
+{
+  const cols = new Set(db.prepare('PRAGMA table_info(call_summaries)').all().map((c) => c.name));
+  if (!cols.has('caller_number')) db.exec('ALTER TABLE call_summaries ADD COLUMN caller_number TEXT');
+  if (!cols.has('transferred')) db.exec('ALTER TABLE call_summaries ADD COLUMN transferred INTEGER NOT NULL DEFAULT 0');
 }
 
 /** Run fn inside a transaction; roll back if it throws. */

@@ -12,6 +12,7 @@ const store = require('./store');
 const sec = require('./security');
 const onboarding = require('./onboarding');
 const telnyx = require('./telnyx');
+const telnyxSync = require('./telnyx-sync');
 const { BY_SLUG } = require('./services');
 
 const eventLimiter = new sec.RateLimiter(config.eventRateLimitPerHour, 3_600_000); // per API key
@@ -240,6 +241,36 @@ async function handleApi(req, res, url) {
       return h.json(res, 200, { ok: true, ...result });
     } catch (err) {
       console.error('[api] reminders error:', err);
+      logAccess(null, req, pathname, 500);
+      return h.json(res, 500, { error: 'Server error' });
+    }
+  }
+
+  // ---- Telnyx active sync trigger (bypasses Bearer auth; gated by TELNYX_SYNC_SECRET) ----
+  // POST /api/v1/admin/telnyx-sync with { "sync_secret": "..." }
+  // (or an X-Telnyx-Sync-Secret header). Pulls assistants, conversations, phone
+  // numbers and balance from Telnyx (read-only GETs) into the dashboard DB.
+  // Call it from a cron (hourly is plenty; the sync itself skips a run within
+  // 5 minutes of the last one). When TELNYX_SYNC_SECRET is unset the route is 404.
+  if (pathname === '/api/v1/admin/telnyx-sync') {
+    if (!config.telnyxSyncSecret) return h.json(res, 404, { error: 'Not found' });
+    if (req.method !== 'POST') return h.json(res, 405, { error: 'Use POST' });
+    let body = {};
+    try { body = await h.readBody(req); } catch (err) { return h.json(res, err.status || 400, { error: err.message }); }
+    const given = String(req.headers['x-telnyx-sync-secret'] || body.sync_secret || '');
+    const bad = badAuthLimiter.hit(`telnyx-sync:${ip}`);
+    if (!bad.ok) { res.setHeader('Retry-After', String(bad.retryAfter)); return h.json(res, 429, { error: 'Too many failed attempts' }); }
+    if (!given || !sec.safeEqual(given, config.telnyxSyncSecret)) {
+      logAccess(null, req, pathname, 401);
+      return h.json(res, 401, { error: 'Invalid sync secret' });
+    }
+    badAuthLimiter.reset(`telnyx-sync:${ip}`);
+    try {
+      const result = await telnyxSync.syncTelnyx();
+      logAccess(null, req, pathname, result.ok ? 200 : 500);
+      return h.json(res, result.ok ? 200 : 500, result);
+    } catch (err) {
+      console.error('[api] telnyx sync error:', err);
       logAccess(null, req, pathname, 500);
       return h.json(res, 500, { error: 'Server error' });
     }

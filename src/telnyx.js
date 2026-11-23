@@ -155,11 +155,27 @@ function handleTelnyxEvent(body) {
     const occurred = new Date(typeof data.occurred_at === 'string' ? data.occurred_at : Date.now());
     const occurredAt = Number.isNaN(occurred.getTime()) ? new Date() : occurred;
 
-    const ins = db.prepare(`INSERT OR IGNORE INTO call_summaries
-      (client_id, telnyx_agent_id, telnyx_conversation_id, occurred_at, duration_secs, caller_display, outcome, summary_text)
-      VALUES (?,?,?,?,?,?,?,?)`)
-      .run(agent.client_id, agent.id, conversationId, occurredAt.toISOString(), duration, display, outcome, summary);
-    if (!ins.changes) return { ignored: 'conversation already recorded' };
+    // The sync (src/telnyx-sync.js) may already have created this row from the
+    // conversations list, with an empty summary. The webhook fills it in and
+    // only then is the activity event added, so a call is never doubled and a
+    // row the sync created does not block the summary.
+    const existing = db.prepare('SELECT id, summary_text FROM call_summaries WHERE telnyx_conversation_id = ?').get(conversationId);
+    let recorded = false;
+    if (!existing) {
+      db.prepare(`INSERT INTO call_summaries
+        (client_id, telnyx_agent_id, telnyx_conversation_id, occurred_at, duration_secs, caller_display, outcome, summary_text)
+        VALUES (?,?,?,?,?,?,?,?)`)
+        .run(agent.client_id, agent.id, conversationId, occurredAt.toISOString(), duration, display, outcome, summary);
+      recorded = true;
+    } else if (!existing.summary_text) {
+      db.prepare(`UPDATE call_summaries SET caller_display = ?, duration_secs = ?, outcome = ?, summary_text = ?
+        WHERE telnyx_conversation_id = ?`)
+        .run(display, duration, outcome, summary, conversationId);
+      recorded = true;
+    } else {
+      return { ignored: 'conversation already recorded' };
+    }
+    if (!recorded) return { ignored: 'conversation already recorded' };
     const answered = outcome === 'answered';
     const storedId = store.addEventInTx({
       clientId: agent.client_id,

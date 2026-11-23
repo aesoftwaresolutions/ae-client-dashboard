@@ -338,10 +338,67 @@ function listActivity(clientId, limit = 50) {
 const hasSubscription = (clientId, service) =>
   !!db.prepare('SELECT 1 FROM subscriptions WHERE client_id=? AND service=?').get(clientId, service);
 
+// ---- Telnyx active sync reads (admin view + client Calls list) -----------------
+/** Everything the admin Telnyx section needs. Numbers are AE-owned, so they are shown masked. */
+function listTelnyxOverview() {
+  const account = db.prepare('SELECT balance_cents, currency, updated_at FROM telnyx_account WHERE id = 1').get() || null;
+  const sync = db.prepare('SELECT last_sync_at, last_success_at, last_error, assistants_synced, conversations_synced, numbers_synced FROM telnyx_sync_state WHERE id = 1').get() || null;
+  const numbers = db.prepare('SELECT phone_number, status, connection_id, voice_url, status_callback, purchased_at, last_synced_at FROM telnyx_numbers ORDER BY phone_number').all();
+  const agents = db.prepare(`SELECT a.telnyx_assistant_id, a.telnyx_phone_number, a.name, a.model, a.tools_json, a.instructions_hash,
+    a.last_synced_at, a.status, c.business_name
+    FROM telnyx_agents a LEFT JOIN clients c ON c.id = a.client_id ORDER BY a.telnyx_phone_number`).all()
+    .map((a) => ({ ...a, tools: (() => { try { return JSON.parse(a.tools_json || '[]'); } catch { return []; } })() }));
+  return { account, sync, numbers, agents };
+}
+
+/** The client's Front Desk agent (name, model, number, tools) for the Calls card. */
+function getTelnyxAgent(clientId) {
+  const row = db.prepare(`SELECT telnyx_assistant_id, telnyx_phone_number, name, model, tools_json, last_synced_at
+    FROM telnyx_agents WHERE client_id = ? AND service_slug IN ('front-desk', 'always-on-front-desk')
+    ORDER BY service_slug LIMIT 1`).get(clientId);
+  if (!row) return null;
+  let tools = [];
+  try { tools = JSON.parse(row.tools_json || '[]'); } catch { tools = []; }
+  return { ...row, tools };
+}
+
+/** The client's call history, newest first. Caller numbers are masked on display. */
+function listCalls(clientId, limit = 50) {
+  const n = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
+  return db.prepare(`
+    SELECT telnyx_conversation_id, occurred_at, duration_secs, caller_display, outcome, summary_text, transferred
+    FROM call_summaries WHERE client_id = ? ORDER BY occurred_at DESC LIMIT ?`).all(clientId, n)
+    .map((c) => ({ ...c, caller_display: maskPhones(c.caller_display), summary_text: maskPhones(c.summary_text) }));
+}
+
+/**
+ * Calls + minutes in the current billing cycle, anchored on the Front Desk
+ * subscription's next_billing_at (same anchor the billing view uses). Falls
+ * back to the calendar month when no next billing date is set.
+ */
+function getCallsUsage(clientId) {
+  const sub = db.prepare(`SELECT next_billing_at FROM subscriptions
+    WHERE client_id = ? AND service IN ('front-desk', 'always-on-front-desk') AND status = 'active'
+    ORDER BY next_billing_at DESC LIMIT 1`).get(clientId);
+  let cycleStart;
+  if (sub && sub.next_billing_at) {
+    const next = new Date(sub.next_billing_at);
+    cycleStart = Number.isNaN(next.getTime())
+      ? monthStartIso()
+      : new Date(Date.UTC(next.getUTCFullYear(), next.getUTCMonth() - 1, next.getUTCDate())).toISOString();
+  } else {
+    cycleStart = monthStartIso();
+  }
+  const row = db.prepare(`SELECT COUNT(*) AS calls, COALESCE(SUM(duration_secs), 0) AS seconds
+    FROM call_summaries WHERE client_id = ? AND occurred_at >= ?`).get(clientId, cycleStart);
+  return { calls: row.calls, minutes: Math.round(row.seconds / 60), cycle_start: cycleStart };
+}
+
 module.exports = {
   createClient, createUser, setPassword, passwordExpired, listOnboardingPending, recordOnboardingReminder,
   addSubscription, setServiceStatus, createApiKey, revokeApiKey,
   addEvent, addEventInTx, listServiceCards, listActivity, hasSubscription, nowIso,
   getBilling, setCard, addInvoice, updateSubscription,
   addSupportMessage, listSupportMessages, markSupportHandled, listClientsOverview, addTelnyxAgent,
+  listTelnyxOverview, getTelnyxAgent, listCalls, getCallsUsage,
 };

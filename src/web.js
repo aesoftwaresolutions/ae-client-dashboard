@@ -8,6 +8,7 @@ const store = require('./store');
 const sec = require('./security');
 const { sendMail } = require('./mail');
 const fulfillment = require('../scripts/purchase-fulfillment');
+const telnyxSync = require('./telnyx-sync');
 
 // Brute-force protection (per IP and per email).
 const loginIpLimiter = new sec.RateLimiter(30, 15 * 60_000);
@@ -174,8 +175,13 @@ async function handleWeb(req, res, url) {
           clients: store.listClientsOverview(),
           messages: store.listSupportMessages({ limit: 100 }),
           fulfillments: fulfillment.listFulfillments(config.dataDir),
+          telnyx: store.listTelnyxOverview(),
           notice: url.searchParams.get('notice') === 'handled' ? 'Message marked as handled.'
-            : url.searchParams.get('notice') === 'fulfilled' ? 'Sale marked as fulfilled.' : '',
+            : url.searchParams.get('notice') === 'fulfilled' ? 'Sale marked as fulfilled.'
+            : url.searchParams.get('notice') === 'telnyx-synced' ? 'Telnyx sync finished.'
+            : url.searchParams.get('notice') === 'telnyx-error' ? 'Telnyx sync failed. Check that TELNYX_API_KEY is set.'
+            : url.searchParams.get('notice') === 'telnyx-not-configured' ? 'Telnyx sync is not configured yet. Set TELNYX_API_KEY in the hosting env vars.'
+            : '',
         }));
       }
       return h.html(res, 200, views.dashboardPage({ businessName: me.client.business_name, csrf }));
@@ -187,6 +193,9 @@ async function handleWeb(req, res, url) {
       services: store.listServiceCards(me.client.id),
       activity: store.listActivity(me.client.id, 30),
       billing: store.getBilling(me.client.id),
+      telnyx_agent: store.getTelnyxAgent(me.client.id),
+      calls: store.listCalls(me.client.id, 50),
+      calls_usage: store.getCallsUsage(me.client.id),
     });
   }
 
@@ -242,6 +251,18 @@ async function handleWeb(req, res, url) {
       try { fulfillment.markFulfillmentHandled(fulfilledMatch[1], config.dataDir); } catch { /* already gone */ }
     }
     return h.redirect(res, '/dashboard?notice=fulfilled');
+  }
+
+  // --- Admin: run the Telnyx sync now (AE staff only, CSRF checked) ---
+  if (pathname === '/admin/telnyx-sync' && method === 'POST') {
+    const me = currentUser(req);
+    if (!me) return h.redirect(res, '/login');
+    if (!isAdmin(me)) return h.html(res, 403, views.messagePage('Not allowed', 'This page is for AE staff only.'));
+    const body = await h.readBody(req);
+    if (!h.checkCsrf(req, body)) return h.redirect(res, '/dashboard');
+    const result = await telnyxSync.syncTelnyx();
+    if (!result.ok && result.error === 'telnyx api key not configured') return h.redirect(res, '/dashboard?notice=telnyx-not-configured');
+    return h.redirect(res, result.ok ? '/dashboard?notice=telnyx-synced' : '/dashboard?notice=telnyx-error');
   }
 
   return false; // not a web route

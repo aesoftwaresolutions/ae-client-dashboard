@@ -60,6 +60,13 @@ module.exports = {
   // When empty the receiver rejects every request (fails closed).
   telnyxPublicKey: env.TELNYX_PUBLIC_KEY || '',
   telnyxToleranceSec: 300, // replay window: reject signatures older (or newer) than 5 minutes
+  // Telnyx active sync (src/telnyx-sync.js): read-only GETs against api.telnyx.com.
+  // TELNYX_API_KEY is a secret: hosting env vars only, never a file or the repo.
+  // When empty the sync reports "not configured" and does nothing.
+  telnyxApiKey: env.TELNYX_API_KEY || '',
+  // Secret for POST /api/v1/admin/telnyx-sync (the cron trigger). When empty that route is 404.
+  telnyxSyncSecret: env.TELNYX_SYNC_SECRET || '',
+  telnyxSyncMinIntervalSec: 300, // a sync within this many seconds of the last one is skipped
   // Optional: where to send a notice when a client posts a support message.
   // When empty, messages are only stored and shown in the admin view.
   supportNotifyEmail: env.SUPPORT_NOTIFY_EMAIL || '',

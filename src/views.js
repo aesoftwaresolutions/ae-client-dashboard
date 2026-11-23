@@ -1,6 +1,7 @@
 'use strict';
 // Server-rendered HTML pages. Everything user-supplied goes through esc().
 const { LOGO_MARK, FAVICON_16, FAVICON_32, APPLE_TOUCH } = require('./brand');
+const { maskPhones } = require('./security');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 function layout(title, body, { script } = {}) {
@@ -107,7 +108,7 @@ const fmtDate = (iso, withTime = false) => {
  * AE staff view: every client, their services and statuses, and the support inbox.
  * Server rendered, no script, everything escaped. Only reached when role is admin.
  */
-function adminPage({ email, csrf, clients = [], messages = [], fulfillments = [], notice: info = '' }) {
+function adminPage({ email, csrf, clients = [], messages = [], fulfillments = [], telnyx = null, notice: info = '' }) {
   const open = messages.filter((m) => m.status === 'open').length;
   const pendingSales = fulfillments.filter((f) => f.status === 'pending' || f.status === 'unknown-product');
   const saleRows = fulfillments.length ? fulfillments.map((f) => `
@@ -150,6 +151,35 @@ function adminPage({ email, csrf, clients = [], messages = [], fulfillments = []
     </div>
   </li>`).join('')}</ol>` : '<div class="glass empty">No messages yet.</div>';
 
+  // Telnyx active sync: balance, last sync, numbers, assistants. Numbers are
+  // AE-owned but still masked on display. The sync is read-only; nothing here
+  // changes Telnyx, it only shows what the last pull found.
+  const t = telnyx || {};
+  const balanceLabel = t.account && Number.isInteger(t.account.balance_cents)
+    ? `$${(t.account.balance_cents / 100).toFixed(2)} ${esc(t.account.currency || 'USD')}` : 'Not synced yet';
+  const syncLine = t.sync && t.sync.last_success_at
+    ? `Last synced ${esc(fmtDate(t.sync.last_success_at, true))} · ${t.sync.conversations_synced ?? 0} calls, ${t.sync.assistants_synced ?? 0} assistants, ${t.sync.numbers_synced ?? 0} numbers`
+    : (t.sync && t.sync.last_error ? `Last sync failed: ${esc(t.sync.last_error)}` : 'No sync has run yet. Set TELNYX_API_KEY in the hosting env vars, then sync.');
+  const numberRows = (t.numbers || []).length ? (t.numbers || []).map((n) => `
+    <li><span>${esc(maskPhones(n.phone_number))} · ${esc(n.status || 'unknown')}</span>
+    <span class="muted small">${esc(n.voice_url ? 'routed' : 'no routing')}</span></li>`).join('')
+    : '<li><span class="muted small">No numbers synced yet.</span></li>';
+  const agentRows = (t.agents || []).length ? (t.agents || []).map((a) => `
+    <li><span>${esc(a.name || a.telnyx_assistant_id)} · ${esc(a.model || '')}</span>
+    <span class="muted small">${esc(maskPhones(a.telnyx_phone_number))}${a.tools && a.tools.length ? ` · tools: ${esc(a.tools.join(', '))}` : ''}${a.business_name ? ` · ${esc(a.business_name)}` : ''}</span></li>`).join('')
+    : '<li><span class="muted small">No assistants synced yet.</span></li>';
+  const telnyxSection = `
+  <h1>Telnyx</h1>
+  <div class="glass card">
+    <div class="card__head"><div><h3 class="card__name">Balance ${balanceLabel}</h3>
+    <p class="card__plan">${syncLine}</p></div></div>
+    <form method="post" action="/admin/telnyx-sync" class="admin__handled">${csrfField(csrf)}<button class="btn btn--ghost" type="submit">Sync now</button></form>
+    <h2>Phone numbers</h2>
+    <ul class="admin__services">${numberRows}</ul>
+    <h2>AI assistants</h2>
+    <ul class="admin__services">${agentRows}</ul>
+  </div>`;
+
   return layout('Admin', `${header('AE Admin', csrf)}
 <main class="wrap">
   ${notice(info)}
@@ -158,6 +188,7 @@ function adminPage({ email, csrf, clients = [], messages = [], fulfillments = []
   <section class="cards">${saleRows}</section>
   <h1>Clients</h1>
   <section class="cards">${clientRows}</section>
+  ${telnyxSection}
   <h2>Support messages${open ? ` (${open} open)` : ''}</h2>
   ${messageRows}
 </main>`);

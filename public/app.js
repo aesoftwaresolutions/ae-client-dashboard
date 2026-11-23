@@ -150,6 +150,35 @@
     }));
   }
 
+  /** Front Desk calls: the agent, this cycle's usage, and the call history. */
+  function renderCalls(data) {
+    var agent = data.telnyx_agent;
+    var calls = data.calls || [];
+    var usage = data.calls_usage;
+    if (!agent && !calls.length) return null;
+    var agentLine = agent
+      ? el('p', { class: 'card__update' }, 'Answered by ' + (agent.name || 'Front Desk') +
+          (agent.model ? ' · ' + agent.model : '') +
+          (agent.telnyx_phone_number ? ' · ' + agent.telnyx_phone_number : ''))
+      : null;
+    var usageLine = usage
+      ? el('p', { class: 'card__update muted' }, usage.calls + ' call' + (usage.calls === 1 ? '' : 's') +
+          ' · ' + usage.minutes + ' minute' + (usage.minutes === 1 ? '' : 's') + ' this billing cycle')
+      : null;
+    var list = calls.length
+      ? el('ol', { class: 'glass feed' }, ...calls.map(function (c) {
+          var dur = c.duration_secs ? Math.round(c.duration_secs / 60) + ' min' : '';
+          var tag = c.transferred ? 'Transferred' : label(c.outcome);
+          return el('li', {},
+            el('div', { class: 'feed__meta' }, el('span', {}, formatWhen(c.occurred_at)), el('span', { class: 'tag' }, tag)),
+            el('div', {}, el('p', { class: 'feed__title' }, c.caller_display + (dur ? ' · ' + dur : '')),
+              c.summary_text && el('p', { class: 'feed__detail' }, c.summary_text)));
+        }))
+      : el('div', { class: 'glass empty' }, 'No calls yet.');
+    return el('section', { 'aria-label': 'Calls' },
+      el('h2', {}, 'Calls'), agentLine, usageLine, list);
+  }
+
   // The live part (cards, feed, billing) is redrawn every minute. The support form
   // lives outside it so a half typed message is never wiped by the refresh.
   var live = el('div', {});
@@ -160,6 +189,7 @@
       data.services.length
         ? el('section', { class: 'cards' }, ...data.services.map(renderCard))
         : el('div', { class: 'glass empty' }, 'No services yet. Once AE sets one up for you, it will appear here.'),
+      renderCalls(data),
       el('h2', {}, 'Recent activity'),
       renderFeed(data.activity),
       data.billing ? el('h2', {}, 'Billing') : null,
