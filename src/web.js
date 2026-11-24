@@ -9,12 +9,16 @@ const sec = require('./security');
 const { sendMail } = require('./mail');
 const fulfillment = require('../scripts/purchase-fulfillment');
 const telnyxSync = require('./telnyx-sync');
+const agentSettings = require('./telnyx-agent-settings');
+const transcript = require('./telnyx-transcript');
 
 // Brute-force protection (per IP and per email).
 const loginIpLimiter = new sec.RateLimiter(30, 15 * 60_000);
 const loginEmailLimiter = new sec.RateLimiter(8, 15 * 60_000);
 const forgotLimiter = new sec.RateLimiter(5, 60 * 60_000);
 const supportLimiter = new sec.RateLimiter(10, 60 * 60_000); // per user
+const agentSettingsLimiter = new sec.RateLimiter(10, 60 * 60_000); // per user
+const callDetailLimiter = new sec.RateLimiter(30, 60 * 60_000); // per user; each open may call Telnyx for a fresh recording URL
 
 const SUPPORT_SUBJECT_MAX = 120;
 const SUPPORT_MESSAGE_MAX = 2000;
@@ -188,15 +192,88 @@ async function handleWeb(req, res, url) {
     }
     // /app/data: the client id comes from the session, never from the request.
     if (me.user.role !== 'client' || !me.client) return h.json(res, 403, { error: 'Not a client account' });
+    const agent = store.getTelnyxAgent(me.client.id);
     return h.json(res, 200, {
       business_name: me.client.business_name,
       services: store.listServiceCards(me.client.id),
       activity: store.listActivity(me.client.id, 30),
       billing: store.getBilling(me.client.id),
-      telnyx_agent: store.getTelnyxAgent(me.client.id),
+      telnyx_agent: agent,
       calls: store.listCalls(me.client.id, 50),
       calls_usage: store.getCallsUsage(me.client.id),
+      agent_settings: agent ? store.getAgentSettings(agent.id) : null,
     });
+  }
+
+  // --- AI Agent settings (client accounts; JSON, CSRF checked) ---
+  // GET /app/agent-settings returns the settings to show in the form: the
+  // saved settings when they exist, otherwise a live pre-fill from Telnyx.
+  // POST saves them: the prompt is built, PATCHed to Telnyx, and only then
+  // stored locally. The client id comes from the session, never the request,
+  // so a client can only ever touch their own agent.
+  if (pathname === '/app/agent-settings') {
+    const me = currentUser(req);
+    if (!me) return h.json(res, 401, { error: 'Not signed in' });
+    if (me.user.role !== 'client' || !me.client) return h.json(res, 403, { error: 'Not a client account' });
+    if (method === 'GET') {
+      const effective = await agentSettings.getEffectiveSettings(me.client.id);
+      if (!effective) return h.json(res, 404, { error: 'No Front Desk agent yet. Once AE sets one up for you, its settings will appear here.' });
+      return h.json(res, 200, { ok: true, agent: effective.agent, settings: effective.settings, from_telnyx: effective.fromTelnyx });
+    }
+    if (method !== 'POST') return h.json(res, 405, { error: 'Use POST' });
+    const body = await h.readBody(req, 64 * 1024);
+    if (!h.checkCsrf(req, body)) return h.json(res, 400, { error: 'Your session expired. Please refresh the page and try again.' });
+    const rl = agentSettingsLimiter.hit(me.user.id);
+    if (!rl.ok) {
+      res.setHeader('Retry-After', String(rl.retryAfter));
+      return h.json(res, 429, { error: 'You have saved several times in the last hour. Please try again later.' });
+    }
+    const result = await agentSettings.saveAgentSettings({
+      clientId: me.client.id,
+      fields: { ...body, business_name: me.client.business_name },
+    });
+    if (!result.ok && result.error === 'no-agent') return h.json(res, 404, { error: 'No Front Desk agent yet.' });
+    if (!result.ok && result.error === 'no-subscription') return h.json(res, 403, { error: 'Your Front Desk subscription is not active.' });
+    if (!result.ok) return h.json(res, 502, { error: result.error });
+    return h.json(res, 200, { ok: true, settings: result.settings });
+  }
+
+  // --- One call's transcript + recording (client accounts; JSON, GET) ---
+  // GET /app/calls/{telnyx_conversation_id} returns the call plus the full
+  // transcript (the words actually spoken) and, when Telnyx has a completed
+  // recording, a fresh playable audio URL. The recording URL is presigned
+  // for 600 seconds, so it is fetched here on every open and never stored;
+  // a fetch that fails still returns the transcript with recording: null.
+  // The client id comes from the session, never the request, so a client
+  // can only ever open their own calls. AE staff may pass ?client_id= to
+  // open one of that client's calls.
+  const callMatch = /^\/app\/calls\/([A-Za-z0-9-]{10,120})$/.exec(pathname);
+  if (callMatch && method === 'GET') {
+    const me = currentUser(req);
+    if (!me) return h.json(res, 401, { error: 'Not signed in' });
+    const admin = isAdmin(me);
+    const clientId = admin
+      ? String(url.searchParams.get('client_id') || '')
+      : (me.user.role === 'client' && me.client ? me.client.id : '');
+    if (!clientId) return h.json(res, 403, { error: 'Not a client account' });
+    const rl = callDetailLimiter.hit(me.user.id);
+    if (!rl.ok) {
+      res.setHeader('Retry-After', String(rl.retryAfter));
+      return h.json(res, 429, { error: 'You have opened several calls in the last hour. Please try again later.' });
+    }
+    const detail = store.getCallDetail(clientId, callMatch[1]);
+    if (!detail) return h.json(res, 404, { error: 'Call not found.' });
+    let recording = null;
+    if (detail.call_control_id) {
+      try {
+        recording = await transcript.fetchRecordingUrl(detail.call_control_id);
+      } catch (err) {
+        console.warn('[web] recording lookup failed:', err && err.message ? err.message : err);
+        recording = null;
+      }
+    }
+    const { call_control_id, ...call } = detail;
+    return h.json(res, 200, { ok: true, call, recording });
   }
 
   // --- Message AE support (client accounts; JSON from the dashboard, CSRF checked) ---

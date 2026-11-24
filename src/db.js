@@ -237,6 +237,24 @@ CREATE TABLE IF NOT EXISTS telnyx_sync_state (
   conversations_synced INTEGER,
   numbers_synced       INTEGER
 );
+
+-- Client-facing AI agent settings (src/telnyx-agent-settings.js). One row per
+-- telnyx_agents row. The client edits these in the dashboard after buying a
+-- Front Desk subscription; saving PATCHes the Telnyx assistant (name, greeting,
+-- instructions) and only then stores the row here. instructions holds the exact
+-- prompt that was applied to Telnyx; custom_instructions is 1 when the client
+-- wrote that prompt themselves, 0 when it was built from the business fields.
+CREATE TABLE IF NOT EXISTS telnyx_agent_settings (
+  agent_id            INTEGER PRIMARY KEY REFERENCES telnyx_agents(id) ON DELETE CASCADE,
+  agent_name          TEXT,
+  greeting            TEXT,
+  business_description TEXT,
+  services_offered    TEXT,
+  business_hours      TEXT,
+  instructions        TEXT,
+  custom_instructions INTEGER NOT NULL DEFAULT 0,
+  updated_at          TEXT NOT NULL
+);
 `);
 
 // ---- Migrations for databases created before a schema change ----------------
@@ -266,6 +284,15 @@ CREATE TABLE IF NOT EXISTS telnyx_sync_state (
   const cols = new Set(db.prepare('PRAGMA table_info(call_summaries)').all().map((c) => c.name));
   if (!cols.has('caller_number')) db.exec('ALTER TABLE call_summaries ADD COLUMN caller_number TEXT');
   if (!cols.has('transferred')) db.exec('ALTER TABLE call_summaries ADD COLUMN transferred INTEGER NOT NULL DEFAULT 0');
+}
+// Call transcripts: the words actually spoken, stored as normalized JSON
+// (src/telnyx-transcript.js), plus the Telnyx call control id used to fetch
+// a fresh recording URL on demand. A transcript is only ever filled when it
+// is still empty; it is never overwritten.
+{
+  const cols = new Set(db.prepare('PRAGMA table_info(call_summaries)').all().map((c) => c.name));
+  if (!cols.has('transcript_json')) db.exec('ALTER TABLE call_summaries ADD COLUMN transcript_json TEXT');
+  if (!cols.has('call_control_id')) db.exec('ALTER TABLE call_summaries ADD COLUMN call_control_id TEXT');
 }
 
 /** Run fn inside a transaction; roll back if it throws. */

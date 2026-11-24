@@ -169,10 +169,14 @@
       ? el('ol', { class: 'glass feed' }, ...calls.map(function (c) {
           var dur = c.duration_secs ? Math.round(c.duration_secs / 60) + ' min' : '';
           var tag = c.transferred ? 'Transferred' : label(c.outcome);
+          var btn = el('button', { class: 'btn btn--ghost', type: 'button' },
+            c.has_transcript ? 'View transcript' : 'View call');
+          btn.addEventListener('click', function () { openCallDetail(c.telnyx_conversation_id); });
           return el('li', {},
             el('div', { class: 'feed__meta' }, el('span', {}, formatWhen(c.occurred_at)), el('span', { class: 'tag' }, tag)),
             el('div', {}, el('p', { class: 'feed__title' }, c.caller_display + (dur ? ' · ' + dur : '')),
-              c.summary_text && el('p', { class: 'feed__detail' }, c.summary_text)));
+              c.summary_text && el('p', { class: 'feed__detail' }, c.summary_text)),
+            btn);
         }))
       : el('div', { class: 'glass empty' }, 'No calls yet.');
     return el('section', { 'aria-label': 'Calls' },
@@ -246,6 +250,204 @@
       form);
   }
 
+  /** AI Agent settings. The client tailors their Front Desk agent to their
+   * business after buying a subscription. The form lives outside the live
+   * refresh area so a half typed setting is never wiped. Fields are filled
+   * once from /app/data (saved settings) or, when none exist yet, from a live
+   * read of the Telnyx assistant; later loads never overwrite what the
+   * client has typed. */
+  var agentForm = null;
+  var agentDirty = false;
+  var agentPopulated = false;
+  var agentStatus = null;
+  var agentFields = {};
+
+  function renderAgentSettings() {
+    agentStatus = el('p', { class: 'muted small', role: 'status', 'aria-live': 'polite' }, '');
+    function field(name, labelText, input, hint) {
+      return el('label', {}, labelText, input, hint ? el('span', { class: 'muted small' }, hint) : null);
+    }
+    agentFields.name = el('input', { type: 'text', name: 'agent_name', maxlength: '80', autocomplete: 'off', required: 'required' });
+    agentFields.greeting = el('input', { type: 'text', name: 'greeting', maxlength: '500', autocomplete: 'off', required: 'required' });
+    agentFields.description = el('textarea', { name: 'business_description', rows: '3', maxlength: '1000' });
+    agentFields.services = el('textarea', { name: 'services_offered', rows: '3', maxlength: '1000' });
+    agentFields.hours = el('input', { type: 'text', name: 'business_hours', maxlength: '200', autocomplete: 'off' });
+    agentFields.transfer = el('p', { class: 'card__update' }, '');
+    agentFields.instructions = el('textarea', { name: 'instructions', rows: '6', maxlength: '20000' });
+    agentFields.useCustom = el('input', { type: 'checkbox', name: 'use_custom_instructions' });
+    var save = el('button', { class: 'btn', type: 'submit' }, 'Save agent settings');
+    agentForm = el('form', { class: 'form support', novalidate: 'novalidate' },
+      field('agent_name', 'Agent name', agentFields.name, 'What callers hear as the agent\u2019s name.'),
+      field('greeting', 'Greeting', agentFields.greeting, 'The first thing your agent says when it answers.'),
+      field('business_description', 'What your business does', agentFields.description, 'A sentence or two, in your own words.'),
+      field('services_offered', 'Services you offer', agentFields.services, 'List them separated by commas, or one per line.'),
+      field('business_hours', 'Business hours', agentFields.hours, 'For example: Monday to Friday, 9am to 5pm.'),
+      el('label', {}, 'Urgent calls go to', agentFields.transfer, el('span', { class: 'muted small' }, 'To change this number, send us a message below.')),
+      field('instructions', 'Agent instructions', agentFields.instructions,
+        'Leave this blank and the instructions are built from the details above. Or write your own and tick the box below.'),
+      save, agentStatus);
+    // The checkbox label sits on its own row.
+    var customLabel = el('label', { class: 'muted small' }, agentFields.useCustom, ' Use my instructions exactly as written');
+    agentForm.insertBefore(customLabel, save);
+    agentForm.addEventListener('input', function () { agentDirty = true; });
+    agentForm.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var name = agentFields.name.value.trim();
+      var greeting = agentFields.greeting.value.trim();
+      if (!name) { agentStatus.className = 'error'; agentStatus.textContent = 'Give your agent a name.'; return; }
+      if (!greeting) { agentStatus.className = 'error'; agentStatus.textContent = 'Write a greeting for your agent.'; return; }
+      save.disabled = true;
+      agentStatus.className = 'muted small';
+      agentStatus.textContent = 'Saving…';
+      fetch('/app/agent-settings', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          _csrf: csrfToken(),
+          agent_name: name,
+          greeting: greeting,
+          business_description: agentFields.description.value.trim(),
+          services_offered: agentFields.services.value.trim(),
+          business_hours: agentFields.hours.value.trim(),
+          instructions: agentFields.instructions.value.trim(),
+          use_custom_instructions: agentFields.useCustom.checked
+        })
+      })
+        .then(function (r) {
+          if (r.status === 401) { location.href = '/login'; return null; }
+          return r.json().then(function (d) { return { ok: r.ok, data: d }; });
+        })
+        .then(function (res) {
+          if (!res) return;
+          if (!res.ok) throw new Error((res.data && res.data.error) || 'We could not save that. Please try again.');
+          agentDirty = false;
+          agentPopulated = true;
+          agentStatus.className = 'notice';
+          agentStatus.textContent = 'Saved. Your agent now answers with these settings.';
+          load();
+        })
+        .catch(function (err) {
+          agentStatus.className = 'error';
+          agentStatus.textContent = err.message || 'We could not save that. Please try again.';
+        })
+        .then(function () { save.disabled = false; });
+    });
+    var section = el('section', { class: 'glass pad support__box', 'aria-labelledby': 'agent-title', style: 'display: none' },
+      el('h2', { id: 'agent-title', class: 'support__title' }, 'Your AI receptionist'),
+      el('p', { class: 'muted' }, 'This is the agent that answers your calls. Change the details below and it will answer in your business\u2019s voice.'),
+      agentForm);
+    section.id = 'agent-settings';
+    return section;
+  }
+
+  function fillAgentForm(s) {
+    agentFields.name.value = s.agent_name || '';
+    agentFields.greeting.value = s.greeting || '';
+    agentFields.description.value = s.business_description || '';
+    agentFields.services.value = s.services_offered || '';
+    agentFields.hours.value = s.business_hours || '';
+    agentFields.instructions.value = s.instructions || '';
+    agentFields.useCustom.checked = !!s.custom_instructions;
+  }
+
+  function populateAgentSettings(data) {
+    var section = document.getElementById('agent-settings');
+    if (!section || !data.telnyx_agent) return;
+    section.style.display = '';
+    agentFields.transfer.textContent = data.telnyx_agent.transfer_phone_number || 'Not set';
+    if (agentPopulated || agentDirty) return;
+    if (data.agent_settings) {
+      fillAgentForm(data.agent_settings);
+      agentPopulated = true;
+      return;
+    }
+    // No saved settings yet: pre-fill from the live assistant.
+    fetch('/app/agent-settings', { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (!d || !d.settings || agentDirty) return;
+        fillAgentForm(d.settings);
+        agentPopulated = true;
+      })
+      .catch(function () { /* the form still opens; the client fills it in */ });
+  }
+
+  /** One call's transcript + recording. Lives outside the live refresh area
+   * so opening a transcript is never wiped by the 60-second redraw. The
+   * transcript is the words actually spoken, caller and agent turns in
+   * order, so the customer can check exactly what was said. The recording
+   * plays from a fresh Telnyx link each time the call is opened. */
+  var callDetailSection = null;
+  var callDetailBody = null;
+
+  function renderCallDetailSection() {
+    callDetailBody = el('div', {});
+    var back = el('button', { class: 'btn btn--ghost', type: 'button' }, 'Back to calls');
+    back.addEventListener('click', function () { closeCallDetail(); });
+    callDetailSection = el('section', { class: 'glass pad support__box', 'aria-labelledby': 'call-title', style: 'display: none' },
+      el('h2', { id: 'call-title', class: 'support__title' }, 'Call transcript'),
+      callDetailBody,
+      back);
+    callDetailSection.id = 'call-detail';
+    return callDetailSection;
+  }
+
+  function closeCallDetail() {
+    if (callDetailSection) callDetailSection.style.display = 'none';
+    if (callDetailBody) callDetailBody.replaceChildren();
+  }
+
+  function openCallDetail(conversationId) {
+    if (!callDetailSection || !callDetailBody) return;
+    callDetailSection.style.display = '';
+    callDetailBody.replaceChildren(el('p', { class: 'muted' }, 'Loading the transcript…'));
+    callDetailSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    fetch('/app/calls/' + encodeURIComponent(conversationId), { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+      .then(function (r) {
+        if (r.status === 401) { location.href = '/login'; return null; }
+        return r.json().then(function (d) { return { ok: r.ok, data: d }; });
+      })
+      .then(function (res) {
+        if (!res) return;
+        if (!res.ok) throw new Error((res.data && res.data.error) || 'We could not open that call. Please try again.');
+        renderCallDetail(res.data);
+      })
+      .catch(function (err) {
+        callDetailBody.replaceChildren(el('p', { class: 'error', role: 'alert' }, err.message || 'We could not open that call. Please try again.'));
+      });
+  }
+
+  function renderCallDetail(data) {
+    var c = data.call || {};
+    var dur = c.duration_secs ? Math.round(c.duration_secs / 60) + ' min' : '';
+    var head = el('div', {},
+      el('p', { class: 'card__update' }, c.caller_display + (dur ? ' · ' + dur : '') +
+        (c.transferred ? ' · Transferred' : '') + ' · ' + formatWhen(c.occurred_at)),
+      c.summary_text && el('p', { class: 'feed__detail' }, c.summary_text));
+    var recording = null;
+    if (data.recording && data.recording.url) {
+      var audio = el('audio', { controls: 'controls', src: data.recording.url, preload: 'auto', style: 'width: 100%' });
+      recording = el('div', {},
+        el('p', { class: 'card__update' }, 'Hear the call'),
+        audio,
+        el('p', { class: 'muted small' }, 'The recording plays from a fresh link each time you open the call.'));
+    } else {
+      recording = el('p', { class: 'muted small' }, 'No recording for this call.');
+    }
+    var transcript = null;
+    if (c.transcript && c.transcript.length) {
+      transcript = el('ol', { class: 'glass feed' }, ...c.transcript.map(function (t) {
+        return el('li', {},
+          el('div', { class: 'feed__meta' }, el('span', { class: 'tag' }, t.role === 'caller' ? 'Caller' : 'Agent')),
+          el('p', { class: 'feed__detail' }, t.text));
+      }));
+    } else {
+      transcript = el('p', { class: 'muted' },
+        'No transcript yet for this call. It usually appears a few minutes after the call ends, once the call is processed. Please check back shortly.');
+    }
+    callDetailBody.replaceChildren(head, recording, transcript);
+  }
+
   function load() {
     fetch('/app/data', { credentials: 'same-origin', headers: { Accept: 'application/json' } })
       .then(function (r) {
@@ -253,13 +455,13 @@
         if (!r.ok) throw new Error('bad status');
         return r.json();
       })
-      .then(function (data) { if (data) render(data); })
+      .then(function (data) { if (data) { render(data); populateAgentSettings(data); } })
       .catch(function () {
         live.replaceChildren(el('p', { class: 'error', role: 'alert' }, 'We could not load your dashboard. Please refresh in a moment.'));
       });
   }
 
-  app.replaceChildren(live, renderSupport());
+  app.replaceChildren(live, renderSupport(), renderAgentSettings(), renderCallDetailSection());
   live.replaceChildren(el('p', { class: 'muted', id: 'loading' }, 'Loading your dashboard…'));
   load();
   setInterval(load, 60000); // keep the feed fresh without a reload

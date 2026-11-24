@@ -4,6 +4,7 @@ const { db, tx } = require('./db');
 const config = require('./config');
 const { newId, newToken, sha256, hashPassword, maskPhones, sanitizeMetadata } = require('./security');
 const { SERVICES, BY_SLUG, STATUS_LABELS, STATUS_EVENTS, DERIVABLE_FROM } = require('./services');
+const transcript = require('./telnyx-transcript');
 
 const nowIso = () => new Date().toISOString();
 
@@ -351,9 +352,9 @@ function listTelnyxOverview() {
   return { account, sync, numbers, agents };
 }
 
-/** The client's Front Desk agent (name, model, number, tools) for the Calls card. */
+/** The client's Front Desk agent (name, model, number, tools) for the Calls card and the AI Agent settings. */
 function getTelnyxAgent(clientId) {
-  const row = db.prepare(`SELECT telnyx_assistant_id, telnyx_phone_number, name, model, tools_json, last_synced_at
+  const row = db.prepare(`SELECT id, service_slug, telnyx_assistant_id, telnyx_phone_number, transfer_phone_number, name, model, tools_json, last_synced_at
     FROM telnyx_agents WHERE client_id = ? AND service_slug IN ('front-desk', 'always-on-front-desk')
     ORDER BY service_slug LIMIT 1`).get(clientId);
   if (!row) return null;
@@ -366,9 +367,39 @@ function getTelnyxAgent(clientId) {
 function listCalls(clientId, limit = 50) {
   const n = Math.min(Math.max(parseInt(limit, 10) || 50, 1), 200);
   return db.prepare(`
-    SELECT telnyx_conversation_id, occurred_at, duration_secs, caller_display, outcome, summary_text, transferred
+    SELECT telnyx_conversation_id, occurred_at, duration_secs, caller_display, outcome, summary_text, transferred,
+      (transcript_json IS NOT NULL) AS has_transcript
     FROM call_summaries WHERE client_id = ? ORDER BY occurred_at DESC LIMIT ?`).all(clientId, n)
-    .map((c) => ({ ...c, caller_display: maskPhones(c.caller_display), summary_text: maskPhones(c.summary_text) }));
+    .map((c) => ({ ...c, has_transcript: c.has_transcript === 1, caller_display: maskPhones(c.caller_display), summary_text: maskPhones(c.summary_text) }));
+}
+
+/**
+ * One call's detail for the transcript view: the call itself plus the full
+ * transcript (or null when none has arrived yet) and the call control id
+ * needed to fetch a fresh recording URL on demand. Returns null when the
+ * conversation does not belong to this client. The transcript text is
+ * masked again here, so a stored transcript can never leak a full number.
+ */
+function getCallDetail(clientId, conversationId) {
+  const row = db.prepare(`
+    SELECT telnyx_conversation_id, occurred_at, duration_secs, caller_display, outcome, summary_text, transferred,
+      transcript_json, call_control_id
+    FROM call_summaries WHERE client_id = ? AND telnyx_conversation_id = ?`).get(clientId, conversationId);
+  if (!row) return null;
+  const turns = transcript.parseTranscript(row.transcript_json)
+    .map((t) => ({ ...t, text: maskPhones(t.text) }));
+  return {
+    telnyx_conversation_id: row.telnyx_conversation_id,
+    occurred_at: row.occurred_at,
+    duration_secs: row.duration_secs,
+    caller_display: maskPhones(row.caller_display),
+    outcome: row.outcome,
+    summary_text: maskPhones(row.summary_text),
+    transferred: row.transferred,
+    has_transcript: turns.length > 0,
+    transcript: turns.length ? turns : null,
+    call_control_id: row.call_control_id || null,
+  };
 }
 
 /**
@@ -394,11 +425,47 @@ function getCallsUsage(clientId) {
   return { calls: row.calls, minutes: Math.round(row.seconds / 60), cycle_start: cycleStart };
 }
 
+/** The client's saved AI Agent settings, or null when they have never saved any. */
+function getAgentSettings(agentId) {
+  const row = db.prepare(`SELECT agent_name, greeting, business_description, services_offered,
+    business_hours, instructions, custom_instructions, updated_at
+    FROM telnyx_agent_settings WHERE agent_id = ?`).get(agentId);
+  if (!row) return null;
+  return { ...row, custom_instructions: row.custom_instructions === 1 };
+}
+
+/**
+ * Stores the settings only AFTER the Telnyx PATCH succeeded. In the same
+ * transaction, updates the agent row so the sync stays consistent: the name
+ * the client set, the hash of the instructions that were applied, and the
+ * sync time. Never touches call_summaries, balance or numbers.
+ */
+function saveAgentSettingsLocal(agentId, { agentName, greeting, businessDescription, servicesOffered, businessHours, instructions, customInstructions }) {
+  const t = nowIso();
+  const hash = sha256(instructions || '');
+  tx(() => {
+    db.prepare(`INSERT INTO telnyx_agent_settings
+      (agent_id, agent_name, greeting, business_description, services_offered, business_hours, instructions, custom_instructions, updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(agent_id) DO UPDATE SET
+        agent_name = excluded.agent_name, greeting = excluded.greeting,
+        business_description = excluded.business_description, services_offered = excluded.services_offered,
+        business_hours = excluded.business_hours, instructions = excluded.instructions,
+        custom_instructions = excluded.custom_instructions, updated_at = excluded.updated_at`)
+      .run(agentId, agentName || null, greeting || null, businessDescription || null, servicesOffered || null,
+        businessHours || null, instructions || null, customInstructions ? 1 : 0, t);
+    db.prepare(`UPDATE telnyx_agents SET name = ?, instructions_hash = ?, last_synced_at = ?, updated_at = ?
+      WHERE id = ?`).run(agentName || null, hash, t, t, agentId);
+  });
+  return getAgentSettings(agentId);
+}
+
 module.exports = {
   createClient, createUser, setPassword, passwordExpired, listOnboardingPending, recordOnboardingReminder,
   addSubscription, setServiceStatus, createApiKey, revokeApiKey,
   addEvent, addEventInTx, listServiceCards, listActivity, hasSubscription, nowIso,
   getBilling, setCard, addInvoice, updateSubscription,
   addSupportMessage, listSupportMessages, markSupportHandled, listClientsOverview, addTelnyxAgent,
-  listTelnyxOverview, getTelnyxAgent, listCalls, getCallsUsage,
+  listTelnyxOverview, getTelnyxAgent, listCalls, getCallsUsage, getCallDetail,
+  getAgentSettings, saveAgentSettingsLocal,
 };
