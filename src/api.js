@@ -276,6 +276,47 @@ async function handleApi(req, res, url) {
     }
   }
 
+  // ---- Link a Telnyx agent to a client (one-time provisioning, same gate) ----
+  // POST /api/v1/admin/link-telnyx-agent with { "sync_secret": "...",
+  //   "client_id": "cl_...", "service": "front-desk",
+  //   "assistant_id": "assistant-...", "phone": "+19729440615",
+  //   "transfer_phone": "+17179771021", "call_limit": 60 }.
+  // Creates the telnyx_agents row the sync and the webhook both need to map
+  // calls to a client. Without this row the sync reports assistants: 0 and
+  // the webhook ignores call summaries. Idempotent-ish: a duplicate
+  // (assistant_id or phone) is a 409, not a second row.
+  if (pathname === '/api/v1/admin/link-telnyx-agent') {
+    if (!config.telnyxSyncSecret) return h.json(res, 404, { error: 'Not found' });
+    if (req.method !== 'POST') return h.json(res, 405, { error: 'Use POST' });
+    let body = {};
+    try { body = await h.readBody(req); } catch (err) { return h.json(res, err.status || 400, { error: err.message }); }
+    const given = String(req.headers['x-telnyx-sync-secret'] || body.sync_secret || '');
+    const bad = badAuthLimiter.hit(`telnyx-link:${ip}`);
+    if (!bad.ok) { res.setHeader('Retry-After', String(bad.retryAfter)); return h.json(res, 429, { error: 'Too many failed attempts' }); }
+    if (!given || !sec.safeEqual(given, config.telnyxSyncSecret)) {
+      logAccess(null, req, pathname, 401);
+      return h.json(res, 401, { error: 'Invalid sync secret' });
+    }
+    badAuthLimiter.reset(`telnyx-link:${ip}`);
+    try {
+      const agentId = store.addTelnyxAgent({
+        clientId: String(body.client_id || ''),
+        service: String(body.service || ''),
+        assistantId: String(body.assistant_id || ''),
+        phone: String(body.phone || ''),
+        transferPhone: String(body.transfer_phone || ''),
+        callLimit: Number(body.call_limit) || 60,
+      });
+      logAccess(null, req, pathname, 200);
+      return h.json(res, 200, { ok: true, agent_id: agentId });
+    } catch (err) {
+      const msg = err && err.message ? err.message : 'Server error';
+      const dup = /UNIQUE constraint failed/i.test(msg);
+      logAccess(null, req, pathname, dup ? 409 : 400);
+      return h.json(res, dup ? 409 : 400, { ok: false, error: msg });
+    }
+  }
+
   // ---- Direct Telnyx webhook (bypasses Bearer auth; Ed25519 signature instead) ----
   // Telnyx cannot send our Bearer key, so the tenant comes from telnyx_agents
   // (assistant id or dialled number), never from the request.
