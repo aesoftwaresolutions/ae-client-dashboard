@@ -99,9 +99,11 @@ function ownAgent(clientId) {
  * The settings to show the client. When they have saved settings, those are
  * returned. When they have not, the current Telnyx assistant is read live so
  * the form is pre-filled with the name, greeting and instructions that are
- * actually live; the business fields start empty for the client to fill in.
- * A failed live read falls back to what the sync already stored (the name),
- * so the form still opens. Returns null when the client has no agent.
+ * actually live; the business description, services and hours come from the
+ * client's business profile when they have filled that in (the live
+ * assistant never carries those fields). A failed live read falls back to
+ * what the sync already stored (the name), so the form still opens. Returns
+ * null when the client has no agent.
  */
 async function getEffectiveSettings(clientId, fetchFn = fetch) {
   const agent = ownAgent(clientId);
@@ -117,14 +119,18 @@ async function getEffectiveSettings(clientId, fetchFn = fetch) {
       console.warn('[agent-settings] live pre-fill failed, using sync data:', err.message);
     }
   }
+  // The business profile is the single home for business info: when the
+  // client has filled it in, its description, services and hours pre-fill
+  // the agent form, so they do not have to type them twice.
+  const profile = store.getProfile(clientId);
   return {
     agent,
     settings: {
       agent_name: (live && live.name) || agent.name || '',
       greeting: (live && live.greeting) || '',
-      business_description: '',
-      services_offered: '',
-      business_hours: '',
+      business_description: (profile && profile.business_description) || '',
+      services_offered: (profile && profile.services_offered) || '',
+      business_hours: (profile && profile.business_hours) || '',
       instructions: (live && live.instructions) || '',
       custom_instructions: false,
       updated_at: null,

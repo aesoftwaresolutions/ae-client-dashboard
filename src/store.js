@@ -294,7 +294,12 @@ function markSupportHandled(id, adminUserId) {
 
 // ---- Admin overview (AE staff only; callers must check role first) --------------
 function listClientsOverview() {
-  const clients = db.prepare('SELECT id, business_name, contact_name, email, status, created_at FROM clients ORDER BY business_name COLLATE NOCASE').all();
+  const clients = db.prepare(`
+    SELECT c.id, c.business_name, c.contact_name, c.email, c.status, c.created_at,
+      p.website, p.address_street, p.address_city, p.address_state, p.address_zip,
+      p.business_description, p.services_offered, p.business_hours, p.logo_filename
+    FROM clients c LEFT JOIN client_profiles p ON p.client_id = c.id
+    ORDER BY c.business_name COLLATE NOCASE`).all();
   const services = db.prepare(`
     SELECT s.client_id, s.service, s.plan, s.status AS billing_status, ss.status, ss.updated_at
     FROM subscriptions s LEFT JOIN service_status ss ON ss.client_id = s.client_id AND ss.service = s.service`).all();
@@ -460,6 +465,62 @@ function saveAgentSettingsLocal(agentId, { agentName, greeting, businessDescript
   return getAgentSettings(agentId);
 }
 
+// ---- Client business profile (src/client-profile.js) --------------------------
+// The merged profile: the clients row (name, contact, email, phone) plus the
+// client_profiles row (website, address, description, services, hours, logo).
+// logo_filename is the generated file name under DATA_DIR/logos/, or null.
+function getProfile(clientId) {
+  const row = db.prepare(`
+    SELECT c.id, c.business_name, c.contact_name, c.email, c.phone, c.status, c.created_at,
+      p.website, p.address_street, p.address_city, p.address_state, p.address_zip,
+      p.business_description, p.services_offered, p.business_hours, p.logo_filename, p.updated_at
+    FROM clients c LEFT JOIN client_profiles p ON p.client_id = c.id
+    WHERE c.id = ?`).get(clientId);
+  if (!row) return null;
+  return {
+    ...row,
+    has_logo: !!row.logo_filename,
+  };
+}
+
+/** Writes a validated profile: clients row + client_profiles upsert, one tx. */
+function saveProfileLocal(clientId, fields) {
+  const t = nowIso();
+  tx(() => {
+    db.prepare('UPDATE clients SET business_name = ?, contact_name = ?, email = ?, phone = ? WHERE id = ?')
+      .run(fields.businessName, fields.contactName || null, fields.email, fields.phone || null, clientId);
+    db.prepare(`INSERT INTO client_profiles
+      (client_id, website, address_street, address_city, address_state, address_zip,
+       business_description, services_offered, business_hours, updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?)
+      ON CONFLICT(client_id) DO UPDATE SET
+        website = excluded.website, address_street = excluded.address_street,
+        address_city = excluded.address_city, address_state = excluded.address_state,
+        address_zip = excluded.address_zip, business_description = excluded.business_description,
+        services_offered = excluded.services_offered, business_hours = excluded.business_hours,
+        updated_at = excluded.updated_at`)
+      .run(clientId, fields.website || null, fields.addressStreet || null, fields.addressCity || null,
+        fields.addressState || null, fields.addressZip || null, fields.businessDescription || null,
+        fields.servicesOffered || null, fields.businessHours || null, t);
+  });
+  return getProfile(clientId);
+}
+
+/** Records a new logo filename for a client (creating the profile row when needed). */
+function setLogo(clientId, filename) {
+  const t = nowIso();
+  db.prepare(`INSERT INTO client_profiles (client_id, logo_filename, updated_at) VALUES (?,?,?)
+    ON CONFLICT(client_id) DO UPDATE SET logo_filename = excluded.logo_filename, updated_at = excluded.updated_at`)
+    .run(clientId, filename, t);
+}
+
+/** Clears the logo filename. Returns the filename that was stored, or null. */
+function clearLogo(clientId) {
+  const row = db.prepare('SELECT logo_filename FROM client_profiles WHERE client_id = ?').get(clientId);
+  db.prepare('UPDATE client_profiles SET logo_filename = NULL, updated_at = ? WHERE client_id = ?').run(nowIso(), clientId);
+  return row ? row.logo_filename : null;
+}
+
 module.exports = {
   createClient, createUser, setPassword, passwordExpired, listOnboardingPending, recordOnboardingReminder,
   addSubscription, setServiceStatus, createApiKey, revokeApiKey,
@@ -468,4 +529,5 @@ module.exports = {
   addSupportMessage, listSupportMessages, markSupportHandled, listClientsOverview, addTelnyxAgent,
   listTelnyxOverview, getTelnyxAgent, listCalls, getCallsUsage, getCallDetail,
   getAgentSettings, saveAgentSettingsLocal,
+  getProfile, saveProfileLocal, setLogo, clearLogo,
 };

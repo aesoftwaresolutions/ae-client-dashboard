@@ -205,9 +205,193 @@
     return input ? input.value : '';
   }
 
+  /** Business profile. The single home for the client's business info, plus
+   * their logo. The form lives outside the live refresh area so a half typed
+   * detail is never wiped. Fields are filled once from GET /app/profile;
+   * later loads never overwrite what the client has typed. The logo is
+   * uploaded as a file (multipart) and shown as a preview when one exists. */
+  var profileForm = null;
+  var profileDirty = false;
+  var profilePopulated = false;
+  var profileStatus = null;
+  var profileFields = {};
+  var profileLogoImg = null;
+  var profileLogoNote = null;
+  var profileLogoInput = null;
+  var profileLogoStatus = null;
+
+  function renderProfile() {
+    profileStatus = el('p', { class: 'muted small', role: 'status', 'aria-live': 'polite' }, '');
+    function field(name, labelText, input, hint) {
+      return el('label', {}, labelText, input, hint ? el('span', { class: 'muted small' }, hint) : null);
+    }
+    profileFields.business_name = el('input', { type: 'text', name: 'business_name', maxlength: '200', autocomplete: 'organization', required: 'required' });
+    profileFields.contact_name = el('input', { type: 'text', name: 'contact_name', maxlength: '120', autocomplete: 'name' });
+    profileFields.email = el('input', { type: 'email', name: 'email', maxlength: '254', autocomplete: 'email' });
+    profileFields.phone = el('input', { type: 'tel', name: 'phone', maxlength: '40', autocomplete: 'tel' });
+    profileFields.website = el('input', { type: 'text', name: 'website', maxlength: '300', autocomplete: 'url', placeholder: 'www.example.com' });
+    profileFields.address_street = el('input', { type: 'text', name: 'address_street', maxlength: '200', autocomplete: 'address-line1' });
+    profileFields.address_city = el('input', { type: 'text', name: 'address_city', maxlength: '120', autocomplete: 'address-level2' });
+    profileFields.address_state = el('input', { type: 'text', name: 'address_state', maxlength: '60', autocomplete: 'address-level1' });
+    profileFields.address_zip = el('input', { type: 'text', name: 'address_zip', maxlength: '20', autocomplete: 'postal-code' });
+    profileFields.business_description = el('textarea', { name: 'business_description', rows: '3', maxlength: '1000' });
+    profileFields.services_offered = el('textarea', { name: 'services_offered', rows: '3', maxlength: '1000' });
+    profileFields.business_hours = el('input', { type: 'text', name: 'business_hours', maxlength: '200', autocomplete: 'off' });
+    var save = el('button', { class: 'btn', type: 'submit' }, 'Save business profile');
+    profileForm = el('form', { class: 'form support', novalidate: 'novalidate' },
+      field('business_name', 'Business name', profileFields.business_name),
+      field('contact_name', 'Contact name', profileFields.contact_name),
+      field('email', 'Email', profileFields.email),
+      field('phone', 'Phone', profileFields.phone),
+      field('website', 'Website', profileFields.website, 'Your website address, for example www.example.com.'),
+      el('div', { class: 'form__row' },
+        field('address_street', 'Street address', profileFields.address_street)),
+      el('div', { class: 'form__row' },
+        field('address_city', 'City', profileFields.address_city),
+        field('address_state', 'State', profileFields.address_state),
+        field('address_zip', 'ZIP', profileFields.address_zip)),
+      field('business_description', 'What your business does', profileFields.business_description, 'A sentence or two, in your own words.'),
+      field('services_offered', 'Services you offer', profileFields.services_offered, 'List them separated by commas, or one per line.'),
+      field('business_hours', 'Business hours', profileFields.business_hours, 'For example: Monday to Friday, 9am to 5pm.'),
+      save, profileStatus);
+    profileForm.addEventListener('input', function () { profileDirty = true; });
+    profileForm.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var name = profileFields.business_name.value.trim();
+      if (!name) { profileStatus.className = 'error'; profileStatus.textContent = 'Please enter your business name.'; return; }
+      save.disabled = true;
+      profileStatus.className = 'muted small';
+      profileStatus.textContent = 'Saving…';
+      var body = { _csrf: csrfToken() };
+      Object.keys(profileFields).forEach(function (k) { body[k] = profileFields[k].value.trim(); });
+      fetch('/app/profile', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify(body)
+      })
+        .then(function (r) {
+          if (r.status === 401) { location.href = '/login'; return null; }
+          return r.json().then(function (d) { return { ok: r.ok, data: d }; });
+        })
+        .then(function (res) {
+          if (!res) return;
+          if (!res.ok) throw new Error((res.data && res.data.error) || 'We could not save that. Please try again.');
+          profileDirty = false;
+          profilePopulated = true;
+          profileStatus.className = 'notice';
+          profileStatus.textContent = 'Saved. Your business details are up to date.';
+          if (res.data.profile) fillProfileForm(res.data.profile);
+        })
+        .catch(function (err) {
+          profileStatus.className = 'error';
+          profileStatus.textContent = err.message || 'We could not save that. Please try again.';
+        })
+        .then(function () { save.disabled = false; });
+    });
+
+    // Logo: a preview when one exists, a file picker, and upload / remove.
+    profileLogoImg = el('img', { class: 'profile__logo', alt: 'Your business logo', style: 'display: none' });
+    profileLogoNote = el('p', { class: 'muted small' }, 'No logo yet. Upload a PNG, JPG, WebP or GIF under 2 MB.');
+    profileLogoInput = el('input', { type: 'file', name: 'logo', accept: 'image/png,image/jpeg,image/webp,image/gif' });
+    profileLogoStatus = el('p', { class: 'muted small', role: 'status', 'aria-live': 'polite' }, '');
+    var upload = el('button', { class: 'btn btn--ghost', type: 'submit' }, 'Upload logo');
+    var remove = el('button', { class: 'btn btn--ghost', type: 'button' }, 'Remove logo');
+    var logoForm = el('form', { class: 'form support', novalidate: 'novalidate' },
+      profileLogoImg, profileLogoNote, profileLogoInput, upload, remove, profileLogoStatus);
+    logoForm.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var file = profileLogoInput.files && profileLogoInput.files[0];
+      if (!file) { profileLogoStatus.className = 'error'; profileLogoStatus.textContent = 'Choose an image file first.'; return; }
+      var data = new FormData();
+      data.append('_csrf', csrfToken());
+      data.append('logo', file);
+      upload.disabled = true;
+      profileLogoStatus.className = 'muted small';
+      profileLogoStatus.textContent = 'Uploading…';
+      fetch('/app/profile/logo', { method: 'POST', credentials: 'same-origin', body: data })
+        .then(function (r) {
+          if (r.status === 401) { location.href = '/login'; return null; }
+          return r.json().then(function (d) { return { ok: r.ok, data: d }; });
+        })
+        .then(function (res) {
+          if (!res) return;
+          if (!res.ok) throw new Error((res.data && res.data.error) || 'We could not upload that. Please try again.');
+          profileLogoInput.value = '';
+          profileLogoStatus.className = 'notice';
+          profileLogoStatus.textContent = 'Logo uploaded.';
+          if (res.data.profile) fillProfileForm(res.data.profile);
+        })
+        .catch(function (err) {
+          profileLogoStatus.className = 'error';
+          profileLogoStatus.textContent = err.message || 'We could not upload that. Please try again.';
+        })
+        .then(function () { upload.disabled = false; });
+    });
+    remove.addEventListener('click', function () {
+      remove.disabled = true;
+      profileLogoStatus.className = 'muted small';
+      profileLogoStatus.textContent = 'Removing…';
+      fetch('/app/profile/logo/remove', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ _csrf: csrfToken() })
+      })
+        .then(function (r) {
+          if (r.status === 401) { location.href = '/login'; return null; }
+          return r.json().then(function (d) { return { ok: r.ok, data: d }; });
+        })
+        .then(function (res) {
+          if (!res) return;
+          if (!res.ok) throw new Error((res.data && res.data.error) || 'We could not remove that. Please try again.');
+          profileLogoStatus.className = 'notice';
+          profileLogoStatus.textContent = 'Logo removed.';
+          if (res.data.profile) fillProfileForm(res.data.profile);
+        })
+        .catch(function (err) {
+          profileLogoStatus.className = 'error';
+          profileLogoStatus.textContent = err.message || 'We could not remove that. Please try again.';
+        })
+        .then(function () { remove.disabled = false; });
+    });
+
+    var section = el('section', { class: 'glass pad support__box', 'aria-labelledby': 'profile-title' },
+      el('h2', { id: 'profile-title', class: 'support__title' }, 'Your business profile'),
+      el('p', { class: 'muted' }, 'This is the business info your clients and your AI receptionist use. Keep it up to date and it will show up everywhere it is needed.'),
+      el('h3', { class: 'card__name' }, 'Logo'),
+      logoForm,
+      el('h3', { class: 'card__name' }, 'Business details'),
+      profileForm);
+    section.id = 'business-profile';
+    return section;
+  }
+
+  function fillProfileForm(p) {
+    Object.keys(profileFields).forEach(function (k) { profileFields[k].value = p[k] || ''; });
+    if (p.has_logo && p.logo_url) {
+      profileLogoImg.src = p.logo_url + (p.updated_at ? '?v=' + encodeURIComponent(p.updated_at) : '');
+      profileLogoImg.style.display = '';
+      profileLogoNote.textContent = 'Your current logo. Upload a new one to replace it.';
+    } else {
+      profileLogoImg.style.display = 'none';
+      profileLogoImg.removeAttribute('src');
+      profileLogoNote.textContent = 'No logo yet. Upload a PNG, JPG, WebP or GIF under 2 MB.';
+    }
+  }
+
+  function loadProfile() {
+    if (profileDirty || profilePopulated) return;
+    fetch('/app/profile', { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (!d || !d.profile || profileDirty) return;
+        fillProfileForm(d.profile);
+        profilePopulated = true;
+      })
+      .catch(function () { /* the form still opens; the client fills it in */ });
+  }
+
   /** Message AE support. Posts JSON to /app/support with the page CSRF token. */
-  function renderSupport() {
-    var status = el('p', { class: 'muted small', role: 'status', 'aria-live': 'polite' }, '');
+  function renderSupport() {    var status = el('p', { class: 'muted small', role: 'status', 'aria-live': 'polite' }, '');
     var subject = el('input', { type: 'text', name: 'subject', maxlength: '120', autocomplete: 'off' });
     var message = el('textarea', { name: 'message', rows: '5', maxlength: '2000', required: 'required' });
     var button = el('button', { class: 'btn', type: 'submit' }, 'Send message');
@@ -455,13 +639,13 @@
         if (!r.ok) throw new Error('bad status');
         return r.json();
       })
-      .then(function (data) { if (data) { render(data); populateAgentSettings(data); } })
+      .then(function (data) { if (data) { render(data); populateAgentSettings(data); loadProfile(); } })
       .catch(function () {
         live.replaceChildren(el('p', { class: 'error', role: 'alert' }, 'We could not load your dashboard. Please refresh in a moment.'));
       });
   }
 
-  app.replaceChildren(live, renderSupport(), renderAgentSettings(), renderCallDetailSection());
+  app.replaceChildren(live, renderProfile(), renderSupport(), renderAgentSettings(), renderCallDetailSection());
   live.replaceChildren(el('p', { class: 'muted', id: 'loading' }, 'Loading your dashboard…'));
   load();
   setInterval(load, 60000); // keep the feed fresh without a reload

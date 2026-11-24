@@ -238,6 +238,27 @@ CREATE TABLE IF NOT EXISTS telnyx_sync_state (
   numbers_synced       INTEGER
 );
 
+-- Client business profile (src/client-profile.js). One row per client, created
+-- the first time they save their profile. business_name, contact_name, email
+-- and phone live on clients; everything else about the business lives here,
+-- including the logo filename (the file itself lives under DATA_DIR/logos/,
+-- never in the database and never in the repo). The AI Agent settings form
+-- pre-fills its business description / services / hours from this row when
+-- the client has not set them there yet.
+CREATE TABLE IF NOT EXISTS client_profiles (
+  client_id            TEXT PRIMARY KEY REFERENCES clients(id) ON DELETE CASCADE,
+  website              TEXT,
+  address_street       TEXT,
+  address_city         TEXT,
+  address_state        TEXT,
+  address_zip          TEXT,
+  business_description TEXT,
+  services_offered     TEXT,
+  business_hours       TEXT,
+  logo_filename        TEXT,
+  updated_at           TEXT NOT NULL
+);
+
 -- Client-facing AI agent settings (src/telnyx-agent-settings.js). One row per
 -- telnyx_agents row. The client edits these in the dashboard after buying a
 -- Front Desk subscription; saving PATCHes the Telnyx assistant (name, greeting,

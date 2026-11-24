@@ -11,6 +11,8 @@ const fulfillment = require('../scripts/purchase-fulfillment');
 const telnyxSync = require('./telnyx-sync');
 const agentSettings = require('./telnyx-agent-settings');
 const transcript = require('./telnyx-transcript');
+const profile = require('./client-profile');
+const fs = require('node:fs');
 
 // Brute-force protection (per IP and per email).
 const loginIpLimiter = new sec.RateLimiter(30, 15 * 60_000);
@@ -19,6 +21,7 @@ const forgotLimiter = new sec.RateLimiter(5, 60 * 60_000);
 const supportLimiter = new sec.RateLimiter(10, 60 * 60_000); // per user
 const agentSettingsLimiter = new sec.RateLimiter(10, 60 * 60_000); // per user
 const callDetailLimiter = new sec.RateLimiter(30, 60 * 60_000); // per user; each open may call Telnyx for a fresh recording URL
+const profileLimiter = new sec.RateLimiter(10, 60 * 60_000); // per user; profile save, logo upload and logo removal
 
 const SUPPORT_SUBJECT_MAX = 120;
 const SUPPORT_MESSAGE_MAX = 2000;
@@ -236,6 +239,122 @@ async function handleWeb(req, res, url) {
     if (!result.ok && result.error === 'no-subscription') return h.json(res, 403, { error: 'Your Front Desk subscription is not active.' });
     if (!result.ok) return h.json(res, 502, { error: result.error });
     return h.json(res, 200, { ok: true, settings: result.settings });
+  }
+
+  // --- Business profile (client accounts; JSON, CSRF checked) ---
+  // GET /app/profile returns the client's business info and whether they
+  // have a logo. POST saves the form: business name, contact, email, phone,
+  // website, address, description, services and hours. The client id comes
+  // from the session, never the request, so a client can only ever touch
+  // their own profile. AE staff may pass ?client_id= on GET to read a
+  // client's profile (read-only).
+  // The logo filename is never sent to the browser; the logo is reached
+  // through its own route instead.
+  const publicProfile = (p, clientId, admin) => {
+    const { logo_filename, ...rest } = p;
+    const logoUrl = !p.has_logo ? null
+      : admin ? `/app/profile/logo?client_id=${encodeURIComponent(clientId)}` : '/app/profile/logo';
+    return { ...rest, has_logo: p.has_logo, logo_url: logoUrl };
+  };
+  if (pathname === '/app/profile') {
+    const me = currentUser(req);
+    if (!me) return h.json(res, 401, { error: 'Not signed in' });
+    const admin = isAdmin(me);
+    const clientId = admin
+      ? String(url.searchParams.get('client_id') || '')
+      : (me.user.role === 'client' && me.client ? me.client.id : '');
+    if (!clientId) return h.json(res, 403, { error: 'Not a client account' });
+    if (method === 'GET') {
+      const p = profile.getProfile(clientId);
+      if (!p) return h.json(res, 404, { error: 'Client not found.' });
+      return h.json(res, 200, { ok: true, profile: publicProfile(p, clientId, admin) });
+    }
+    if (method !== 'POST') return h.json(res, 405, { error: 'Use POST' });
+    if (admin) return h.json(res, 403, { error: 'Staff cannot change a client profile from here.' });
+    const body = await h.readBody(req, 64 * 1024);
+    if (!h.checkCsrf(req, body)) return h.json(res, 400, { error: 'Your session expired. Please refresh the page and try again.' });
+    const rl = profileLimiter.hit(me.user.id);
+    if (!rl.ok) {
+      res.setHeader('Retry-After', String(rl.retryAfter));
+      return h.json(res, 429, { error: 'You have saved several times in the last hour. Please try again later.' });
+    }
+    const result = profile.saveProfile(me.client.id, body);
+    if (!result.ok) return h.json(res, 400, { error: result.error });
+    return h.json(res, 200, { ok: true, profile: publicProfile(result.profile, me.client.id, false) });
+  }
+
+  // --- Logo upload (multipart form, CSRF checked) ---
+  // POST /app/profile/logo accepts one image file (PNG, JPG, WebP or GIF,
+  // under 2 MB, checked by magic bytes). The file is stored under
+  // DATA_DIR/logos/ with a generated name; replacing a logo removes the old
+  // file. POST /app/profile/logo/remove deletes the file and clears the
+  // record. The client id comes from the session, never the request.
+  if (pathname === '/app/profile/logo' && method === 'POST') {
+    const me = currentUser(req);
+    if (!me) return h.json(res, 401, { error: 'Not signed in' });
+    if (me.user.role !== 'client' || !me.client) return h.json(res, 403, { error: 'Not a client account' });
+    const type = String(req.headers['content-type'] || '');
+    if (!type.includes('multipart/form-data')) return h.json(res, 400, { error: 'Please choose an image file to upload.' });
+    let parsed;
+    try {
+      const raw = await h.readRawBody(req, 3 * 1024 * 1024);
+      parsed = profile.parseMultipart(raw, type);
+    } catch (err) {
+      if (err.status === 413) return h.json(res, 413, { error: 'That image is too large. Please use one under 2 MB.' });
+      return h.json(res, 400, { error: 'We could not read that upload. Please try again.' });
+    }
+    if (!h.checkCsrf(req, { _csrf: parsed.fields._csrf })) return h.json(res, 400, { error: 'Your session expired. Please refresh the page and try again.' });
+    const rl = profileLimiter.hit(me.user.id);
+    if (!rl.ok) {
+      res.setHeader('Retry-After', String(rl.retryAfter));
+      return h.json(res, 429, { error: 'You have uploaded several times in the last hour. Please try again later.' });
+    }
+    const file = parsed.files.logo;
+    if (!file) return h.json(res, 400, { error: 'Choose an image file to upload.' });
+    const result = profile.saveLogo(me.client.id, file.data);
+    if (!result.ok) return h.json(res, 400, { error: result.error });
+    return h.json(res, 200, { ok: true, profile: publicProfile(result.profile, me.client.id, false) });
+  }
+
+  if (pathname === '/app/profile/logo/remove' && method === 'POST') {
+    const me = currentUser(req);
+    if (!me) return h.json(res, 401, { error: 'Not signed in' });
+    if (me.user.role !== 'client' || !me.client) return h.json(res, 403, { error: 'Not a client account' });
+    const body = await h.readBody(req, 16 * 1024);
+    if (!h.checkCsrf(req, body)) return h.json(res, 400, { error: 'Your session expired. Please refresh the page and try again.' });
+    const rl = profileLimiter.hit(me.user.id);
+    if (!rl.ok) {
+      res.setHeader('Retry-After', String(rl.retryAfter));
+      return h.json(res, 429, { error: 'You have made several changes in the last hour. Please try again later.' });
+    }
+    const result = profile.removeLogo(me.client.id);
+    if (!result.ok && result.error === 'no-logo') return h.json(res, 404, { error: 'There is no logo to remove.' });
+    if (!result.ok) return h.json(res, 400, { error: result.error });
+    return h.json(res, 200, { ok: true, profile: publicProfile(result.profile, me.client.id, false) });
+  }
+
+  // --- Serve a client's logo (GET, session checked) ---
+  // The file is read from DATA_DIR/logos/ by its generated name and sent
+  // with the image content type. A client can only ever see their own logo;
+  // AE staff may pass ?client_id= to see a client's logo in the admin view.
+  if (pathname === '/app/profile/logo' && method === 'GET') {
+    const me = currentUser(req);
+    if (!me) return h.json(res, 401, { error: 'Not signed in' });
+    const admin = isAdmin(me);
+    const clientId = admin
+      ? String(url.searchParams.get('client_id') || '')
+      : (me.user.role === 'client' && me.client ? me.client.id : '');
+    if (!clientId) return h.json(res, 403, { error: 'Not a client account' });
+    const filename = profile.logoFilename(clientId);
+    if (!filename) return h.json(res, 404, { error: 'No logo yet.' });
+    const full = profile.logoPath(filename);
+    if (!full || !fs.existsSync(full)) return h.json(res, 404, { error: 'No logo yet.' });
+    const ext = filename.split('.').pop();
+    const mime = profile.LOGO_MIME[ext] || 'application/octet-stream';
+    const data = fs.readFileSync(full);
+    res.writeHead(200, { 'Content-Type': mime, 'Content-Length': data.length });
+    res.end(data);
+    return true;
   }
 
   // --- One call's transcript + recording (client accounts; JSON, GET) ---

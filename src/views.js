@@ -124,20 +124,30 @@ function adminPage({ email, csrf, clients = [], messages = [], fulfillments = []
     ? `<form method="post" action="/admin/fulfillment/${esc(f.charge_id)}/handled" class="admin__handled">${csrfField(csrf)}<button class="btn btn--ghost" type="submit">Mark fulfilled</button></form>`
     : `<p class="muted small">Handled ${esc(fmtDate(f.handled_at, true))}</p>`}
 </article>`).join('') : '<div class="glass empty">No sales yet. The fulfillment watcher writes new purchases here.</div>';
-  const clientRows = clients.length ? clients.map((c) => `
+  const clientRows = clients.length ? clients.map((c) => {
+  const address = [c.address_street, [c.address_city, c.address_state, c.address_zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+  const profileLines = [
+    c.website ? `Website ${c.website}` : '',
+    address ? `Address ${address}` : '',
+    c.business_description || '',
+    c.services_offered ? `Services: ${c.services_offered}` : '',
+    c.business_hours ? `Hours: ${c.business_hours}` : '',
+  ].filter(Boolean);
+  return `
 <article class="glass card admin__client">
   <div class="card__head">
-    <div><h3 class="card__name">${esc(c.business_name)}</h3>
+    <div>${c.logo_filename ? `<img src="/app/profile/logo?client_id=${esc(c.id)}" alt="${esc(c.business_name)} logo" class="admin__logo">` : ''}<h3 class="card__name">${esc(c.business_name)}</h3>
     <p class="card__plan">${esc(c.contact_name || '')}${c.contact_name ? ' · ' : ''}${esc(c.email)}</p>
     <p class="card__plan">Client ID ${esc(c.id)} · since ${esc(fmtDate(c.created_at))}</p></div>
     <span class="pill pill--${c.status === 'active' ? 'active' : 'paused'}">${esc(c.status === 'active' ? 'Active' : c.status)}</span>
   </div>
+  ${profileLines.length ? `<p class="card__plan">${profileLines.map((l) => esc(l)).join('<br>')}</p>` : ''}
   ${c.open_messages ? `<p class="card__update"><strong>${c.open_messages}</strong> open message${c.open_messages === 1 ? '' : 's'}</p>` : ''}
   ${c.services.length ? `<ul class="admin__services">${c.services.map((s) => `
     <li><span>${esc(s.name)}${s.plan ? ` <span class="muted small">${esc(s.plan)}</span>` : ''}</span>
     <span class="pill pill--${esc(s.status)}">${esc(s.status_label)}</span></li>`).join('')}</ul>`
     : '<p class="muted small">No services yet.</p>'}
-</article>`).join('') : '<div class="glass empty">No clients yet. Use <code>npm run manage</code> to create one.</div>';
+</article>`; }).join('') : '<div class="glass empty">No clients yet. Use <code>npm run manage</code> to create one.</div>';
 
   const messageRows = messages.length ? `<ol class="glass feed">${messages.map((m) => `
   <li>
