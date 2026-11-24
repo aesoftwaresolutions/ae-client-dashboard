@@ -13,6 +13,7 @@ const config = require('./config');
 const { db, tx } = require('./db');
 const store = require('./store');
 const { maskPhones } = require('./security');
+const transcript = require('./telnyx-transcript');
 
 // DER prefix that turns 32 raw Ed25519 key bytes into an SPKI public key.
 const ED25519_SPKI_PREFIX = Buffer.from('302a300506032b6570032100', 'hex');
@@ -154,25 +155,46 @@ function handleTelnyxEvent(body) {
     const summary = maskPhones(callerSummary(messages)).slice(0, 500) || (outcome === 'missed' ? 'No summary available.' : 'No summary captured.');
     const occurred = new Date(typeof data.occurred_at === 'string' ? data.occurred_at : Date.now());
     const occurredAt = Number.isNaN(occurred.getTime()) ? new Date() : occurred;
+    // The transcript is the words actually spoken, normalized once here so the
+    // client dashboard can show exactly what was said. The call control id is
+    // kept so a recording URL can be fetched fresh on demand (Telnyx presigns
+    // it for 600 seconds, so it is never stored). Neither is ever overwritten.
+    const transcriptJson = transcript.transcriptToJson(transcript.normalizeMessages(messages));
+    const callControlId = typeof payload.call_control_id === 'string' ? payload.call_control_id.slice(0, 200) : null;
 
     // The sync (src/telnyx-sync.js) may already have created this row from the
     // conversations list, with an empty summary. The webhook fills it in and
     // only then is the activity event added, so a call is never doubled and a
     // row the sync created does not block the summary.
-    const existing = db.prepare('SELECT id, summary_text FROM call_summaries WHERE telnyx_conversation_id = ?').get(conversationId);
+    const existing = db.prepare('SELECT id, summary_text, transcript_json, call_control_id FROM call_summaries WHERE telnyx_conversation_id = ?').get(conversationId);
     let recorded = false;
     if (!existing) {
       db.prepare(`INSERT INTO call_summaries
-        (client_id, telnyx_agent_id, telnyx_conversation_id, occurred_at, duration_secs, caller_display, outcome, summary_text)
-        VALUES (?,?,?,?,?,?,?,?)`)
-        .run(agent.client_id, agent.id, conversationId, occurredAt.toISOString(), duration, display, outcome, summary);
+        (client_id, telnyx_agent_id, telnyx_conversation_id, occurred_at, duration_secs, caller_display, outcome, summary_text, transcript_json, call_control_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?)`)
+        .run(agent.client_id, agent.id, conversationId, occurredAt.toISOString(), duration, display, outcome, summary, transcriptJson, callControlId);
       recorded = true;
     } else if (!existing.summary_text) {
-      db.prepare(`UPDATE call_summaries SET caller_display = ?, duration_secs = ?, outcome = ?, summary_text = ?
+      db.prepare(`UPDATE call_summaries SET caller_display = ?, duration_secs = ?, outcome = ?, summary_text = ?,
+        transcript_json = COALESCE(transcript_json, ?), call_control_id = COALESCE(call_control_id, ?)
         WHERE telnyx_conversation_id = ?`)
-        .run(display, duration, outcome, summary, conversationId);
+        .run(display, duration, outcome, summary, transcriptJson, callControlId, conversationId);
       recorded = true;
     } else {
+      // Already recorded, but the transcript may still be missing (a row from
+      // before transcripts existed, or one the sync created). Fill it without
+      // touching the summary and without adding another activity event.
+      if (!existing.transcript_json && transcriptJson) {
+        db.prepare(`UPDATE call_summaries SET transcript_json = ?, call_control_id = COALESCE(call_control_id, ?)
+          WHERE telnyx_conversation_id = ?`)
+          .run(transcriptJson, callControlId, conversationId);
+        return { transcript_filled: true };
+      }
+      if (!existing.call_control_id && callControlId) {
+        db.prepare('UPDATE call_summaries SET call_control_id = ? WHERE telnyx_conversation_id = ?')
+          .run(callControlId, conversationId);
+        return { transcript_filled: true };
+      }
       return { ignored: 'conversation already recorded' };
     }
     if (!recorded) return { ignored: 'conversation already recorded' };

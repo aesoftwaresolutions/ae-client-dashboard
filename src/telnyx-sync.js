@@ -7,6 +7,9 @@
 //   conversations -> call_summaries (caller, date, duration, transferred)
 //   phone numbers -> telnyx_numbers (number, status, routing)
 //   balance     -> telnyx_account (single row)
+//   transcripts -> call_summaries.transcript_json, backfilled from
+//                  GET /v2/ai/conversations/{id}/messages for calls that
+//                  have none yet (capped at 25 per sync, never overwrites)
 // The sync NEVER writes to Telnyx (GET only) and never touches summary_text:
 // the webhook (src/telnyx.js) owns the transcript summary, and it fills in a
 // row the sync created earlier. The sync never adds events rows either; the
@@ -20,6 +23,7 @@ const crypto = require('node:crypto');
 const config = require('./config');
 const { db, tx } = require('./db');
 const store = require('./store');
+const transcript = require('./telnyx-transcript');
 
 const TELNYX_BASE = 'https://api.telnyx.com';
 
@@ -145,15 +149,19 @@ async function syncTelnyx(fetchFn = fetch) {
         const transferred = Array.isArray(meta.called_tools) && meta.called_tools.includes('transfer') ? 1 : 0;
         const outcome = durSec > 5 ? 'answered' : 'missed';
         const occurredAt = Number.isNaN(created.getTime()) ? startedAt : created;
+        // call_control_id is kept so a recording URL can be fetched fresh on
+        // demand. It is never overwritten once stored.
+        const callControlId = typeof meta.call_control_id === 'string' ? meta.call_control_id.slice(0, 200) : null;
         const ins = db.prepare(`INSERT INTO call_summaries
-          (client_id, telnyx_agent_id, telnyx_conversation_id, occurred_at, duration_secs, caller_display, outcome, summary_text, caller_number, transferred)
-          VALUES (?,?,?,?,?,?,?,?,?,?)
+          (client_id, telnyx_agent_id, telnyx_conversation_id, occurred_at, duration_secs, caller_display, outcome, summary_text, caller_number, transferred, call_control_id)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?)
           ON CONFLICT(telnyx_conversation_id) DO UPDATE SET
             caller_number = excluded.caller_number,
             transferred = excluded.transferred,
             duration_secs = CASE WHEN excluded.duration_secs > 0 THEN excluded.duration_secs ELSE call_summaries.duration_secs END,
-            occurred_at = excluded.occurred_at`)
-          .run(agent.client_id, agent.id, c.id, occurredAt.toISOString(), durSec, maskNum(from), outcome, '', from || null, transferred);
+            occurred_at = excluded.occurred_at,
+            call_control_id = COALESCE(call_summaries.call_control_id, excluded.call_control_id)`)
+          .run(agent.client_id, agent.id, c.id, occurredAt.toISOString(), durSec, maskNum(from), outcome, '', from || null, transferred, callControlId);
         if (ins.changes) counts.conversations += 1;
       }
 
@@ -201,7 +209,30 @@ async function syncTelnyx(fetchFn = fetch) {
     return { ok: false, error: msg };
   }
 
-  return { ok: true, ...counts, balance_cents: balance && balance.balance != null ? Math.round(Number(balance.balance) * 100) : null, last_sync_at: startedAt.toISOString() };
+  // Backfill transcripts for calls that have none yet (the webhook missed
+  // them, or the row predates transcripts). One messages fetch per call,
+  // capped so a sync never hammers Telnyx, and only rows still missing a
+  // transcript. A fetch that fails is skipped and retried on the next sync;
+  // it never fails the sync. Existing transcripts are never overwritten.
+  let transcriptsBackfilled = 0;
+  const missing = db.prepare(`SELECT telnyx_conversation_id FROM call_summaries
+    WHERE transcript_json IS NULL ORDER BY occurred_at DESC LIMIT 25`).all();
+  for (const row of missing) {
+    const conversationId = row.telnyx_conversation_id;
+    if (!conversationId) continue;
+    try {
+      const turns = await transcript.fetchTranscript(conversationId, fetchFn);
+      const json = transcript.transcriptToJson(turns);
+      if (!json) continue;
+      const changed = db.prepare(`UPDATE call_summaries SET transcript_json = ?
+        WHERE telnyx_conversation_id = ? AND transcript_json IS NULL`).run(json, conversationId);
+      if (changed.changes) transcriptsBackfilled += 1;
+    } catch (err) {
+      console.warn(`[telnyx-sync] transcript backfill skipped for ${conversationId}: ${err && err.message ? err.message : err}`);
+    }
+  }
+
+  return { ok: true, ...counts, transcripts_backfilled: transcriptsBackfilled, balance_cents: balance && balance.balance != null ? Math.round(Number(balance.balance) * 100) : null, last_sync_at: startedAt.toISOString() };
 }
 
 module.exports = { syncTelnyx };
