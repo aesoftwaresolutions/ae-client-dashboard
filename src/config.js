@@ -38,6 +38,10 @@ module.exports = {
   // Secret for POST /api/v1/admin/send-password-reminders (the daily cron trigger).
   // When empty that route is disabled (404). Set REMINDER_SECRET in the hosting env vars.
   reminderSecret: env.REMINDER_SECRET || '',
+  // Optional pin for the AE owner-only readouts (store.isAeOwner). When set, the
+  // owner check also requires this client id (e.g. cl_7c6471482e77ce6e). Unset,
+  // the check rests on the owner's login email alone.
+  aeClientId: env.AE_CLIENT_ID || '',
   // Password policy: every password expires 1 year after it is set.
   passwordExpiryDays: 365,
   // New-member onboarding: the set-password link is valid 7 days; reminders go

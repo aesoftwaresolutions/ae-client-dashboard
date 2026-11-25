@@ -346,6 +346,39 @@ const hasSubscription = (clientId, service) =>
 
 // ---- Telnyx active sync reads (admin view + client Calls list) -----------------
 /** Everything the admin Telnyx section needs. Numbers are AE-owned, so they are shown masked. */
+/**
+ * AE's own client login: Anthony signs in as a role 'client' user on the AE
+ * client (created by the bootstrap in src/api.js), so he sees the client
+ * dashboard, not the admin view. This is the one place that says who that is.
+ *
+ * Keyed on the LOGIN email (users.email: unique, case-insensitive, and not
+ * editable from the dashboard), never on clients.email, which any client can
+ * change in their business profile. Also requires role 'client' and a client
+ * attached, and, when AE_CLIENT_ID is set, that exact client id. Anything
+ * missing or unexpected returns false (hide).
+ */
+const AE_OWNER_EMAIL = 'anthony@aesoftwaresolutions.com';
+function isAeOwner(me) {
+  if (!me || !me.user || !me.client) return false;
+  if (me.user.role !== 'client' || !me.user.client_id || me.user.client_id !== me.client.id) return false;
+  if (String(me.user.email || '').trim().toLowerCase() !== AE_OWNER_EMAIL) return false;
+  if (config.aeClientId && me.client.id !== config.aeClientId) return false;
+  return true;
+}
+
+/** The Telnyx account balance for the AE owner's dashboard card: the same row
+ * the admin page reads, plus the last successful sync time. Read only. */
+function getTelnyxBalance() {
+  const account = db.prepare('SELECT balance_cents, currency, updated_at FROM telnyx_account WHERE id = 1').get() || null;
+  const sync = db.prepare('SELECT last_success_at FROM telnyx_sync_state WHERE id = 1').get() || null;
+  return {
+    balance_cents: account && Number.isInteger(account.balance_cents) ? account.balance_cents : null,
+    currency: (account && account.currency) || 'USD',
+    updated_at: (account && account.updated_at) || null,
+    last_success_at: (sync && sync.last_success_at) || null,
+  };
+}
+
 function listTelnyxOverview() {
   const account = db.prepare('SELECT balance_cents, currency, updated_at FROM telnyx_account WHERE id = 1').get() || null;
   const sync = db.prepare('SELECT last_sync_at, last_success_at, last_error, assistants_synced, conversations_synced, numbers_synced FROM telnyx_sync_state WHERE id = 1').get() || null;
@@ -558,6 +591,7 @@ function getClientSendingNumber(clientId) {
 }
 
 module.exports = {
+  AE_OWNER_EMAIL, isAeOwner, getTelnyxBalance,
   createClient, createUser, setPassword, passwordExpired, listOnboardingPending, recordOnboardingReminder,
   addSubscription, setServiceStatus, createApiKey, revokeApiKey,
   addEvent, addEventInTx, listServiceCards, listActivity, hasSubscription, nowIso,

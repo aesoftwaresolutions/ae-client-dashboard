@@ -193,12 +193,32 @@
   // lives outside it so a half typed message is never wiped by the refresh.
   var live = el('div', {});
 
+  /** AE owner only: the Telnyx account balance. The server adds
+   * data.telnyx_balance only for Anthony's own login (store.isAeOwner), so for
+   * every other client this returns null and nothing is drawn. */
+  function renderBalanceCard(t) {
+    if (!t) return null;
+    var amount = Number.isInteger(t.balance_cents)
+      ? (t.balance_cents < 0 ? '-' : '') + '$' + (Math.abs(t.balance_cents) / 100).toFixed(2) + ' ' + (t.currency || 'USD')
+      : 'Not synced yet';
+    var when = t.last_success_at || t.updated_at;
+    return el('article', { class: 'glass card card--owner', 'aria-label': 'Telnyx balance' },
+      el('div', { class: 'card__head' },
+        el('div', {}, el('h3', { class: 'card__name' }, 'Telnyx balance'),
+          el('p', { class: 'card__plan' }, 'Only you can see this')),
+        el('span', { class: 'pill' }, 'Owner')),
+      el('p', { class: 'card__balance' }, amount),
+      when ? el('p', { class: 'card__plan' }, 'Last synced ' + formatWhen(when)) : null);
+  }
+
   function render(data) {
+    var balance = renderBalanceCard(data.telnyx_balance);
     live.replaceChildren(
       el('h1', {}, 'Your services'),
       data.services.length
-        ? el('section', { class: 'cards' }, ...data.services.map(renderCard))
+        ? el('section', { class: 'cards' }, ...data.services.map(renderCard), balance)
         : el('div', { class: 'glass empty' }, 'No services yet. Once AE sets one up for you, it will appear here.'),
+      !data.services.length && balance ? el('section', { class: 'cards' }, balance) : el('div', {}),
       renderCalls(data),
       el('h2', {}, 'Recent activity'),
       renderFeed(data.activity));

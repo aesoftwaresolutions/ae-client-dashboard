@@ -205,7 +205,7 @@ async function handleWeb(req, res, url) {
     // /app/data: the client id comes from the session, never from the request.
     if (me.user.role !== 'client' || !me.client) return h.json(res, 403, { error: 'Not a client account' });
     const agent = store.getTelnyxAgent(me.client.id);
-    return h.json(res, 200, {
+    const data = {
       business_name: me.client.business_name,
       services: store.listServiceCards(me.client.id),
       activity: store.listActivity(me.client.id, 30),
@@ -214,7 +214,11 @@ async function handleWeb(req, res, url) {
       calls: store.listCalls(me.client.id, 50),
       calls_usage: store.getCallsUsage(me.client.id),
       agent_settings: agent ? store.getAgentSettings(agent.id) : null,
-    });
+    };
+    // AE's internal Telnyx balance, for Anthony's own login only. For every
+    // other client the key is not added at all (not even null).
+    if (store.isAeOwner(me)) data.telnyx_balance = store.getTelnyxBalance();
+    return h.json(res, 200, data);
   }
 
   // --- AI Agent settings (client accounts; JSON, CSRF checked) ---

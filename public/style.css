@@ -141,6 +141,8 @@ code { background: var(--glass-strong); padding: 0.1em 0.4em; border-radius: 6px
 .card__name { font-size: 1.05rem; font-weight: 600; margin: 0; }
 .card__plan { color: var(--muted); font-size: 0.82rem; margin: 0.1rem 0 0; }
 .card__update { margin: 0; }
+/* AE owner-only readout (Telnyx balance): the same glass card, kept quiet. */
+.card__balance { margin: 0; font-size: 1.6rem; font-weight: 600; letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
 .card__when { color: var(--muted); font-size: 0.82rem; display: block; }
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 0.6rem; margin: 0; padding: 0; list-style: none; }
 .stats li { background: var(--lg-fill-hover); border: 1px solid var(--lg-line); box-shadow: var(--lg-rim); border-radius: 10px; padding: 0.55rem 0.7rem; }

@@ -142,7 +142,7 @@ async function handleBootstrap(req, res, ip) {
   badAuthLimiter.reset(`bootstrap:${ip}`);
 
   try {
-    const AE_EMAIL = 'anthony@aesoftwaresolutions.com';
+    const AE_EMAIL = store.AE_OWNER_EMAIL; // one definition, shared with the owner-only dashboard check
     const row = db.prepare('SELECT id FROM clients WHERE email = ?').get(AE_EMAIL);
     const clientId = row ? row.id : store.createClient({
       businessName: 'AE Software Solutions LLC',
