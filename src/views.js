@@ -79,18 +79,32 @@ function messagePage(title, text) {
 }
 
 /** Header with sign-out (spec 3: log out on every page). */
-function header(name, csrf) {
+// Client pages get a nav (Dashboard, Settings, Billing); the admin header has none.
+function clientNav(active) {
+  const link = (href, label, key) => `<a class="topbar__link" href="${href}"${active === key ? ' aria-current="page"' : ''}>${label}</a>`;
+  return `<nav class="topbar__nav" aria-label="Dashboard pages">${link('/dashboard', 'Dashboard', 'dashboard')}${link('/settings', 'Settings', 'settings')}${link('/billing', 'Billing', 'billing')}</nav>`;
+}
+
+function header(name, csrf, active) {
   return `<header class="topbar">
   <div class="topbar__brand"><img src="${LOGO_MARK}" alt="AE Software Solutions" class="topbar__logo" width="30" height="30"><span class="brand">AE Software Solutions</span><span class="topbar__name">${esc(name)}</span></div>
+  ${active ? clientNav(active) : ''}
   <form method="post" action="/logout">${csrfField(csrf)}<button class="btn btn--ghost" type="submit">Sign out</button></form>
 </header>`;
 }
 
-function dashboardPage({ businessName, csrf }) {
-  return layout('Dashboard', `${header(businessName, csrf)}
-<main class="wrap" id="app" aria-live="polite">
-  <noscript><p class="notice">Please turn on JavaScript to see your dashboard.</p></noscript>
-  <p class="muted" id="loading">Loading your dashboard…</p>
+// The client app shell. page 'dashboard' (services, calls, activity, profile,
+// support), 'settings' (AI Agent settings and text call summaries) or
+// 'billing' (subscriptions, next payment, card, invoices). app.js reads
+// data-page to decide which sections to draw.
+const CLIENT_PAGES = { dashboard: 'Dashboard', settings: 'Settings', billing: 'Billing' };
+function dashboardPage({ businessName, csrf, page = 'dashboard' }) {
+  const key = CLIENT_PAGES[page] ? page : 'dashboard';
+  const word = key === 'billing' ? 'billing details' : key;
+  return layout(CLIENT_PAGES[key], `${header(businessName, csrf, key)}
+<main class="wrap" id="app" data-page="${key}" aria-live="polite">
+  <noscript><p class="notice">Please turn on JavaScript to see your ${word}.</p></noscript>
+  <p class="muted" id="loading">Loading your ${word}…</p>
 </main>`, { script: '/static/app.js' });
 }
 

@@ -169,11 +169,18 @@ async function handleWeb(req, res, url) {
   }
 
   // --- Dashboard (requires a session) ---
-  if (method === 'GET' && (pathname === '/dashboard' || pathname === '/app/data')) {
+  if (method === 'GET' && (pathname === '/dashboard' || pathname === '/settings' || pathname === '/billing' || pathname === '/app/data')) {
     const me = currentUser(req);
     if (!me) {
       if (pathname === '/app/data') return h.json(res, 401, { error: 'Not signed in' });
       return h.redirect(res, '/login');
+    }
+    // Client-only pages: Settings (AI Agent settings and text call summaries)
+    // and Billing (subscriptions, next payment, card, invoices). AE staff have
+    // neither, so they go back to their admin view.
+    if (pathname === '/settings' || pathname === '/billing') {
+      if (isAdmin(me) || !me.client) return h.redirect(res, '/dashboard');
+      return h.html(res, 200, views.dashboardPage({ businessName: me.client.business_name, csrf: h.ensureCsrf(req, res), page: pathname.slice(1) }));
     }
     if (pathname === '/dashboard') {
       const csrf = h.ensureCsrf(req, res);

@@ -8,6 +8,29 @@
   --glass-strong: rgba(255, 255, 255, 0.08);
   --radius: 16px;
   --font: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+  /* Liquid glass tokens (Nov 25): the same names and values as the website
+     (aesoftwaresolutions.com, ae-v5.css "LIQUID GLASS KIT"), so both read as one
+     system. Frosted glass plus rim only: the website's SVG refraction is not used
+     here on purpose (a data workspace with lists that redraw every minute). */
+  --lg-fill: rgba(255, 255, 255, 0.045);
+  --lg-fill-hover: rgba(255, 255, 255, 0.08);
+  --lg-fill-btn: rgba(255, 255, 255, 0.06);
+  --lg-fill-btn-hover: rgba(255, 255, 255, 0.12);
+  --lg-line: rgba(255, 255, 255, 0.15);
+  --lg-line-strong: rgba(255, 255, 255, 0.34);
+  --lg-rim: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  --lg-rim-strong: inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  --lg-blur: blur(14px) saturate(130%);
+  --lg-blur-heavy: blur(28px) saturate(160%);
+  --lg-field-fill: rgba(255, 255, 255, 0.05);
+  --lg-field-fill-focus: rgba(255, 255, 255, 0.08);
+  --lg-focus: 0 0 0 3px rgba(255, 255, 255, 0.32);
+  --lg-sheet-fill: rgba(22, 22, 26, 0.74);
+  --lg-sheet-line: rgba(255, 255, 255, 0.16);
+  --lg-scrim: rgba(0, 0, 0, 0.55);
+  --lg-press: 0.97;
+  --lg-spring: cubic-bezier(0.2, 0.9, 0.25, 1);
 }
 * { box-sizing: border-box; }
 html { color-scheme: dark; }
@@ -33,36 +56,48 @@ code { background: var(--glass-strong); padding: 0.1em 0.4em; border-radius: 6px
 .topbar__logo { width: 30px; height: 30px; flex: none; }
 
 .glass {
-  background: var(--glass); border: 1px solid var(--line); border-radius: var(--radius);
-  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
-  /* iOS glass rim: a faint top highlight so the edge catches light like the site's glass */
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  /* GlassCard "regular": the website's frosted card recipe (fill, hairline, blur,
+     top rim, soft drop shadow). */
+  background: var(--lg-fill); border: 1px solid var(--lg-line); border-radius: var(--radius);
+  -webkit-backdrop-filter: var(--lg-blur); backdrop-filter: var(--lg-blur);
+  box-shadow: var(--lg-rim), 0 10px 34px rgba(0, 0, 0, 0.38);
 }
 .pad { padding: 1.5rem; }
 
 /* ---- Buttons and forms ---- */
 .btn {
-  font: inherit; font-weight: 600; cursor: pointer; border-radius: 999px; padding: 0.7rem 1.4rem;
+  /* GlassButton "filled": solid white, near-black label. */
+  font: inherit; font-weight: 600; cursor: pointer; border-radius: 999px; padding: 0.7rem 1.4rem; min-height: 44px;
   background: var(--text); color: var(--bg); border: 1px solid var(--text);
+  transition: background-color 0.2s ease, border-color 0.2s ease, scale 0.2s var(--lg-spring);
 }
 .btn:hover { background: rgba(255,255,255,0.85); }
-.btn--ghost { background: transparent; color: var(--text); border-color: var(--line); padding: 0.45rem 1rem; font-weight: 500; }
-.btn--ghost:hover { background: var(--glass-strong); }
+.btn:active:not(:disabled) { scale: var(--lg-press); }
+/* GlassButton "glass": white wash, hairline, top rim. */
+.btn--ghost {
+  background: var(--lg-fill-btn); color: var(--text); border-color: var(--lg-line-strong);
+  box-shadow: var(--lg-rim-strong); padding: 0.45rem 1rem; min-height: 36px; font-weight: 500;
+}
+.btn--ghost:hover { background: var(--lg-fill-btn-hover); border-color: rgba(255, 255, 255, 0.5); }
 :focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
 .form { display: grid; gap: 1rem; grid-template-columns: minmax(0, 1fr); }
 .form > * { min-width: 0; }
 .form input[type="file"] { width: 100%; max-width: 100%; }
 .form label { display: grid; gap: 0.4rem; font-size: 0.9rem; color: var(--muted); }
-.form input {
-  font: inherit; color: var(--text); background: rgba(0,0,0,0.4); border: 1px solid var(--line);
+.form input, .form textarea {
+  /* GlassInput: a faint white wash with a top rim. The border moved from .12 to
+     .34 white so the field edge meets 3:1 against the page. */
+  font: inherit; color: var(--text); caret-color: var(--text); background: var(--lg-field-fill);
+  border: 1px solid var(--lg-line-strong); box-shadow: var(--lg-rim);
   border-radius: 10px; padding: 0.7rem 0.85rem; width: 100%; min-width: 0;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
 }
-.form input:focus { outline: none; border-color: var(--text); }
-.form textarea {
-  font: inherit; color: var(--text); background: rgba(0,0,0,0.4); border: 1px solid var(--line);
-  border-radius: 10px; padding: 0.7rem 0.85rem; resize: vertical; min-height: 7rem; width: 100%; min-width: 0;
+.form input::placeholder, .form textarea::placeholder { color: rgba(255, 255, 255, 0.5); }
+.form input:focus, .form textarea:focus {
+  outline: none; border-color: var(--text); background: var(--lg-field-fill-focus);
+  box-shadow: var(--lg-rim), var(--lg-focus);
 }
-.form textarea:focus { outline: none; border-color: var(--text); }
+.form textarea { resize: vertical; min-height: 7rem; }
 .btn:disabled { opacity: 0.6; cursor: progress; }
 .error, .notice { border: 1px solid var(--line); border-radius: 10px; padding: 0.7rem 0.9rem; margin: 0 0 1rem; font-size: 0.92rem; }
 .error { border-color: rgba(255,255,255,0.5); }
@@ -79,6 +114,26 @@ code { background: var(--glass-strong); padding: 0.1em 0.4em; border-radius: 6px
   padding: 1rem clamp(1rem, 4vw, 2.5rem); border-bottom: 1px solid var(--line);
 }
 .topbar__name { margin-left: 1rem; font-weight: 600; }
+/* Page nav (Dashboard, Settings): a small glass segmented pair. The current
+   page is the white pill, the same "selected" look as the website's mode switcher. */
+.topbar__nav {
+  display: flex; gap: 2px; padding: 3px; margin-left: auto;
+  background: var(--lg-fill-btn); border: 1px solid var(--lg-line); border-radius: 999px; box-shadow: var(--lg-rim);
+}
+.topbar__link {
+  display: inline-flex; align-items: center; min-height: 36px; padding: 0 1rem; border-radius: 999px;
+  color: var(--muted); font-weight: 500; font-size: 0.9rem; text-decoration: none;
+  transition: background-color 0.2s ease, color 0.2s ease;
+}
+.topbar__link:hover { color: var(--text); background: var(--lg-fill-btn-hover); }
+.topbar__link[aria-current="page"] { background: #ffffff; color: #0a0a0a; font-weight: 600; }
+@media (max-width: 560px) {
+  .topbar__nav { order: 3; width: 100%; margin-left: 0; }
+  .topbar__link { flex: 1; justify-content: center; }
+}
+@media (forced-colors: active) {
+  .topbar__link[aria-current="page"] { outline: 2px solid CanvasText; }
+}
 .wrap { width: min(1100px, 100%); margin: 0 auto; padding: 1.5rem clamp(1rem, 4vw, 2.5rem) 4rem; }
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); gap: 1rem; }
 .card { padding: 1.25rem; display: flex; flex-direction: column; gap: 0.75rem; }
@@ -88,7 +143,7 @@ code { background: var(--glass-strong); padding: 0.1em 0.4em; border-radius: 6px
 .card__update { margin: 0; }
 .card__when { color: var(--muted); font-size: 0.82rem; display: block; }
 .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 0.6rem; margin: 0; padding: 0; list-style: none; }
-.stats li { background: var(--glass-strong); border-radius: 10px; padding: 0.55rem 0.7rem; }
+.stats li { background: var(--lg-fill-hover); border: 1px solid var(--lg-line); box-shadow: var(--lg-rim); border-radius: 10px; padding: 0.55rem 0.7rem; }
 .stats strong { display: block; font-size: 1.4rem; line-height: 1.2; }
 .stats span { color: var(--muted); font-size: 0.78rem; }
 .calls { margin: 0; padding: 0; list-style: none; display: grid; gap: 0.5rem; border-top: 1px solid var(--line); padding-top: 0.75rem; }
@@ -154,22 +209,106 @@ code { background: var(--glass-strong); padding: 0.1em 0.4em; border-radius: 6px
   position: fixed; inset: 0; z-index: 50;
   display: flex; align-items: flex-start; justify-content: center;
   padding: 4vh 1rem 1rem;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--lg-scrim);
   -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
   overflow-y: auto;
 }
+.modal-backdrop[hidden] { display: none; }
 .modal-card {
+  /* GlassSheet: the website's sheet recipe (fill, 28px frost, hairline, rim). */
   width: min(640px, 100%);
   max-height: 88vh; overflow-y: auto;
-  background: rgba(22, 22, 22, 0.72);
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: var(--lg-sheet-fill);
+  border: 1px solid var(--lg-sheet-line);
   border-radius: 20px;
-  -webkit-backdrop-filter: blur(22px) saturate(1.4);
-  backdrop-filter: blur(22px) saturate(1.4);
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.16);
+  -webkit-backdrop-filter: var(--lg-blur-heavy);
+  backdrop-filter: var(--lg-blur-heavy);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55), var(--lg-rim-strong);
   padding: 1.5rem;
+  animation: lg-fade-up 0.3s var(--lg-spring);
+}
+.modal-card__grabber { display: none; }
+.modal-card.is-dragging { transition: none; animation: none; }
+@keyframes lg-fade-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes lg-sheet-up { from { transform: translateY(100%); } to { transform: none; } }
+/* Phones: the modal docks to the bottom as a sheet with a grabber, like the
+   website's menu. The scrim drops its blur here (one less full-screen filter
+   under the card's own frost). */
+@media (max-width: 560px) {
+  .modal-backdrop { align-items: flex-end; padding: 0; -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .modal-card {
+    width: 100%; max-height: 92dvh; border-bottom: 0; border-radius: 24px 24px 0 0;
+    padding: 0.75rem 1.25rem max(1.5rem, env(safe-area-inset-bottom));
+    animation: lg-sheet-up 0.42s var(--lg-spring);
+  }
+  .modal-card__grabber {
+    display: block; width: 38px; height: 5px; margin: 0 auto 0.9rem; border-radius: 3px;
+    background: rgba(255, 255, 255, 0.34); touch-action: none; cursor: grab;
+    /* a bigger invisible hit area than the 5px bar */
+    box-shadow: 0 0 0 14px transparent;
+  }
 }
 .modal-card__head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
 .modal-card__head .support__title { margin: 0; }
 .modal-card__close { flex: none; }
 .modal-card audio { width: 100%; }
+
+/* ---- Liquid glass controls (Nov 25) ---- */
+/* GlassSwitch: <input type="checkbox" role="switch">. Still a native checkbox:
+   Space toggles it, the label toggles it, the form reads .checked as before. */
+.switch-row { display: flex !important; align-items: center; gap: 0.75rem; cursor: pointer; }
+.form input[type="checkbox"][role="switch"], input[type="checkbox"][role="switch"] {
+  -webkit-appearance: none; appearance: none; position: relative; flex: none;
+  width: 51px; height: 31px; min-width: 0; margin: 0; padding: 0;
+  border-radius: 999px; background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.24); box-shadow: var(--lg-rim);
+  cursor: pointer; transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+input[type="checkbox"][role="switch"]::before {
+  content: ""; position: absolute; top: 2px; left: 2px; width: 25px; height: 25px; border-radius: 999px;
+  background: #ffffff; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.4);
+  transition: transform 0.28s var(--lg-spring), width 0.2s ease, background-color 0.2s ease;
+}
+.form input[type="checkbox"][role="switch"]:checked, input[type="checkbox"][role="switch"]:checked { background: rgba(255, 255, 255, 0.9); border-color: #ffffff; }
+input[type="checkbox"][role="switch"]:checked::before { transform: translateX(20px); background: #0a0a0a; }
+input[type="checkbox"][role="switch"]:active::before { width: 31px; }
+input[type="checkbox"][role="switch"]:checked:active::before { transform: translateX(14px); }
+input[type="checkbox"][role="switch"]:focus { box-shadow: var(--lg-rim); }
+input[type="checkbox"][role="switch"]:disabled { opacity: 0.5; cursor: default; }
+
+/* GlassInput clear button (app.js adds it beside single-line fields). */
+.field--clearable { position: relative; }
+.form input.field--has-clear { padding-right: 2.6rem; }
+.field-clear {
+  position: absolute; right: 0.5rem; top: var(--clear-top, 50%); margin-top: -14px;
+  width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%;
+  display: inline-grid; place-items: center;
+  background: rgba(255, 255, 255, 0.16); color: var(--text); font: inherit; font-size: 1.05rem; line-height: 1; cursor: pointer;
+}
+.field-clear:hover { background: rgba(255, 255, 255, 0.28); }
+.field-clear[hidden] { display: none; }
+
+/* GlassSlider: any native range input (none on the dashboard today). */
+input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 28px; margin: 0; background: transparent; cursor: pointer; }
+input[type="range"]::-webkit-slider-runnable-track { height: 6px; border-radius: 999px; background: rgba(255, 255, 255, 0.18); }
+input[type="range"]::-moz-range-track { height: 6px; border-radius: 999px; background: rgba(255, 255, 255, 0.18); }
+input[type="range"]::-moz-range-progress { height: 6px; border-radius: 999px; background: #ffffff; }
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 28px; height: 28px; margin-top: -11px; border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92); border: 1px solid #ffffff; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.45);
+}
+input[type="range"]::-moz-range-thumb { width: 28px; height: 28px; border-radius: 999px; background: rgba(255, 255, 255, 0.92); border: 1px solid #ffffff; }
+
+/* Preferences: motion, transparency, Windows high contrast. */
+@media (prefers-reduced-motion: reduce) {
+  .modal-card { animation: none; }
+  .btn:active:not(:disabled) { scale: none; }
+  input[type="checkbox"][role="switch"], input[type="checkbox"][role="switch"]::before { transition: none; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  :root { --lg-fill: rgba(24, 24, 27, 0.96); --lg-fill-hover: rgba(34, 34, 38, 0.98); --lg-sheet-fill: rgba(22, 22, 26, 0.98); --lg-field-fill: rgba(30, 30, 34, 1); }
+}
+@media (forced-colors: active) {
+  input[type="checkbox"][role="switch"], input[type="range"] { -webkit-appearance: auto; appearance: auto; }
+  input[type="checkbox"][role="switch"]::before { display: none; }
+}

@@ -4,6 +4,12 @@
 (function () {
   'use strict';
   var app = document.getElementById('app');
+  // Three pages share this script (src/views.js dashboardPage). 'settings'
+  // holds the AI Agent settings and the text call summaries; 'billing' holds
+  // the read-only billing view; 'dashboard' holds everything else. Every
+  // section is still built the same way; a page only attaches its own
+  // sections and loads only what they need.
+  var PAGE = ({ settings: 1, billing: 1 })[app.getAttribute('data-page')] ? app.getAttribute('data-page') : 'dashboard';
 
   /** el('div', {class: 'x'}, child, 'text') */
   function el(tag, attrs) {
@@ -195,9 +201,12 @@
         : el('div', { class: 'glass empty' }, 'No services yet. Once AE sets one up for you, it will appear here.'),
       renderCalls(data),
       el('h2', {}, 'Recent activity'),
-      renderFeed(data.activity),
-      data.billing ? el('h2', {}, 'Billing') : null,
-      renderBilling(data.billing));
+      renderFeed(data.activity));
+  }
+
+  /** Billing page: the same read-only billing block, on its own page. */
+  function renderBillingPage(data) {
+    live.replaceChildren(el('h1', {}, 'Billing'), renderBilling(data.billing) || el('div', {}));
   }
 
   function csrfToken() {
@@ -458,7 +467,7 @@
     agentFields.hours = el('input', { type: 'text', name: 'business_hours', maxlength: '200', autocomplete: 'off' });
     agentFields.transfer = el('p', { class: 'card__update' }, '');
     agentFields.instructions = el('textarea', { name: 'instructions', rows: '6', maxlength: '20000' });
-    agentFields.useCustom = el('input', { type: 'checkbox', name: 'use_custom_instructions' });
+    agentFields.useCustom = el('input', { type: 'checkbox', role: 'switch', name: 'use_custom_instructions' });
     var save = el('button', { class: 'btn', type: 'submit' }, 'Save agent settings');
     agentForm = el('form', { class: 'form support', novalidate: 'novalidate' },
       field('agent_name', 'Agent name', agentFields.name, 'What callers hear as the agent\u2019s name.'),
@@ -471,7 +480,7 @@
         'Leave this blank and the instructions are built from the details above. Or write your own and tick the box below.'),
       save, agentStatus);
     // The checkbox label sits on its own row.
-    var customLabel = el('label', { class: 'muted small' }, agentFields.useCustom, ' Use my instructions exactly as written');
+    var customLabel = el('label', { class: 'muted small switch-row' }, agentFields.useCustom, ' Use my instructions exactly as written');
     agentForm.insertBefore(customLabel, save);
     agentForm.addEventListener('input', function () { agentDirty = true; });
     agentForm.addEventListener('submit', function (ev) {
@@ -570,14 +579,14 @@
 
   function renderNotifications() {
     notifyStatus = el('p', { class: 'muted small', role: 'status', 'aria-live': 'polite' }, '');
-    notifyFields.enabled = el('input', { type: 'checkbox', name: 'sms_summary_enabled' });
+    notifyFields.enabled = el('input', { type: 'checkbox', role: 'switch', name: 'sms_summary_enabled' });
     notifyFields.number = el('input', { type: 'tel', name: 'sms_number', maxlength: '40', autocomplete: 'tel' });
-    notifyFields.urgentOnly = el('input', { type: 'checkbox', name: 'sms_urgent_only' });
+    notifyFields.urgentOnly = el('input', { type: 'checkbox', role: 'switch', name: 'sms_urgent_only' });
     var save = el('button', { class: 'btn', type: 'submit' }, 'Save notification settings');
     notifyForm = el('form', { class: 'form support', novalidate: 'novalidate' },
-      el('label', { class: 'muted small' }, notifyFields.enabled, ' Text me a summary after each call'),
+      el('label', { class: 'muted small switch-row' }, notifyFields.enabled, ' Text me a summary after each call'),
       el('label', {}, 'Number to text', notifyFields.number, el('span', { class: 'muted small' }, 'The mobile number that gets the summary.')),
-      el('label', { class: 'muted small' }, notifyFields.urgentOnly, ' Only text me about urgent calls'),
+      el('label', { class: 'muted small switch-row' }, notifyFields.urgentOnly, ' Only text me about urgent calls'),
       save, notifyStatus);
     notifyForm.addEventListener('input', function () { notifyDirty = true; });
     notifyForm.addEventListener('submit', function (ev) {
@@ -659,13 +668,16 @@
     callDetailBody = el('div', {});
     var close = el('button', { class: 'btn btn--ghost modal-card__close', type: 'button', 'aria-label': 'Close call details' }, 'Close');
     close.addEventListener('click', function () { closeCallDetail(); });
+    var grabber = el('span', { class: 'modal-card__grabber', 'aria-hidden': 'true' });
     var card = el('section', { class: 'modal-card', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'call-title' },
+      grabber,
       el('div', { class: 'modal-card__head' },
         el('h2', { id: 'call-title', class: 'support__title' }, 'Call transcript'),
         close),
       callDetailBody);
     card.id = 'call-detail';
-    callDetailBackdrop = el('div', { class: 'modal-backdrop', style: 'display: none' }, card);
+    callDetailBackdrop = el('div', { class: 'modal-backdrop', hidden: 'hidden' }, card);
+    sheetDrag(card, grabber, closeCallDetail);
     callDetailBackdrop.addEventListener('click', function (e) {
       if (e.target === callDetailBackdrop) closeCallDetail();
     });
@@ -673,7 +685,7 @@
   }
 
   function closeCallDetail() {
-    if (callDetailBackdrop) callDetailBackdrop.style.display = 'none';
+    if (callDetailBackdrop) callDetailBackdrop.hidden = true;
     if (callDetailBody) callDetailBody.replaceChildren();
     document.body.style.overflow = '';
     if (callDetailOpener && callDetailOpener.focus) callDetailOpener.focus();
@@ -681,13 +693,57 @@
   }
 
   document.addEventListener('keydown', function (e) {
-    if (e.key === 'Escape' && callDetailBackdrop && callDetailBackdrop.style.display !== 'none') closeCallDetail();
+    if (!callDetailBackdrop || callDetailBackdrop.hidden) return;
+    if (e.key === 'Escape') { closeCallDetail(); return; }
+    // Keep Tab inside the open dialog.
+    if (e.key === 'Tab') {
+      var list = Array.prototype.filter.call(
+        callDetailBackdrop.querySelectorAll('a[href], button:not([disabled]), audio[controls], input:not([disabled]), [tabindex]:not([tabindex="-1"])'),
+        function (n) { return n.offsetWidth || n.offsetHeight; });
+      if (!list.length) return;
+      var i = list.indexOf(document.activeElement);
+      if (i === -1) { e.preventDefault(); list[0].focus(); }
+      else if (!e.shiftKey && i === list.length - 1) { e.preventDefault(); list[0].focus(); }
+      else if (e.shiftKey && i === 0) { e.preventDefault(); list[list.length - 1].focus(); }
+    }
   });
+
+  /** Phones show the call modal as a bottom sheet (style.css). Drag the grabber
+   * down, or flick, to close; dragging up resists. Same feel as the website's
+   * menu sheet. Does nothing on desktop, where the grabber is hidden. */
+  function sheetDrag(card, grabber, onClose) {
+    if (!window.PointerEvent) return;
+    var startY = null, dy = 0, lastY = 0, lastT = 0, vel = 0;
+    grabber.addEventListener('pointerdown', function (e) {
+      startY = lastY = e.clientY; dy = 0; vel = 0; lastT = e.timeStamp;
+      try { grabber.setPointerCapture(e.pointerId); } catch (x) {}
+      card.classList.add('is-dragging');
+    });
+    grabber.addEventListener('pointermove', function (e) {
+      if (startY === null) return;
+      var raw = e.clientY - startY;
+      dy = raw >= 0 ? raw : -Math.min(24, Math.sqrt(-raw) * 2.5);
+      var dt = e.timeStamp - lastT;
+      if (dt > 0) vel = (e.clientY - lastY) / dt;
+      lastY = e.clientY; lastT = e.timeStamp;
+      card.style.transform = 'translateY(' + dy + 'px)';
+    });
+    function end() {
+      if (startY === null) return;
+      var shut = dy > 80 || (dy > 16 && vel > 0.5);
+      startY = null;
+      card.classList.remove('is-dragging');
+      card.style.transform = '';
+      if (shut) onClose();
+    }
+    grabber.addEventListener('pointerup', end);
+    grabber.addEventListener('pointercancel', end);
+  }
 
   function openCallDetail(conversationId, opener) {
     if (!callDetailBackdrop || !callDetailBody) return;
     callDetailOpener = opener || null;
-    callDetailBackdrop.style.display = '';
+    callDetailBackdrop.hidden = false;
     document.body.style.overflow = 'hidden';
     callDetailBody.replaceChildren(el('p', { class: 'muted' }, 'Loading the transcript…'));
     var closeBtn = callDetailBackdrop.querySelector('.modal-card__close');
@@ -745,14 +801,74 @@
         if (!r.ok) throw new Error('bad status');
         return r.json();
       })
-      .then(function (data) { if (data) { render(data); populateAgentSettings(data); loadProfile(); loadNotifications(); } })
+      .then(function (data) {
+        if (!data) return;
+        if (PAGE === 'settings') {
+          live.replaceChildren(el('h1', {}, 'Settings'));
+          populateAgentSettings(data);
+          loadNotifications();
+        } else if (PAGE === 'billing') {
+          renderBillingPage(data);
+        } else {
+          render(data);
+          loadProfile();
+        }
+      })
       .catch(function () {
-        live.replaceChildren(el('p', { class: 'error', role: 'alert' }, 'We could not load your dashboard. Please refresh in a moment.'));
+        live.replaceChildren(el('p', { class: 'error', role: 'alert' }, PAGE === 'settings'
+          ? 'We could not load your settings. Please refresh in a moment.'
+          : PAGE === 'billing'
+            ? 'We could not load your billing details. Please refresh in a moment.'
+            : 'We could not load your dashboard. Please refresh in a moment.'));
       });
   }
 
-  app.replaceChildren(live, renderProfile(), renderSupport(), renderAgentSettings(), renderNotifications(), renderCallDetailSection());
-  live.replaceChildren(el('p', { class: 'muted', id: 'loading' }, 'Loading your dashboard…'));
+  /** GlassInput clear button. Fires a real input event so the dirty tracking
+   * and validation above see it. Kept out of the tab order; select-all and
+   * delete does the same from the keyboard. */
+  var CLEAR_TYPES = { text: 1, email: 1, tel: 1, url: 1, search: 1 };
+  function addClear(input) {
+    if (input.hasAttribute('data-clear-on') || input.readOnly || input.disabled) return;
+    if (!CLEAR_TYPES[(input.getAttribute('type') || 'text').toLowerCase()]) return;
+    var holder = input.parentNode;
+    if (!holder || !holder.closest || !holder.closest('.form')) return;
+    input.setAttribute('data-clear-on', '');
+    var label = (holder.firstChild && holder.firstChild.nodeType === 3 ? holder.firstChild.textContent : '').trim();
+    var btn = el('button', { class: 'field-clear', type: 'button', tabindex: '-1', 'aria-label': label ? 'Clear ' + label : 'Clear field' }, '\u00d7');
+    btn.hidden = true;
+    holder.classList.add('field--clearable');
+    input.classList.add('field--has-clear');
+    input.insertAdjacentElement('afterend', btn);
+    function sync() {
+      var show = input.value !== '' && !input.disabled && !input.readOnly;
+      if (show) btn.style.setProperty('--clear-top', (input.offsetTop + input.offsetHeight / 2) + 'px');
+      btn.hidden = !show;
+    }
+    btn.addEventListener('mousedown', function (e) { e.preventDefault(); });
+    btn.addEventListener('click', function () {
+      input.value = '';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      sync();
+      input.focus();
+    });
+    input.addEventListener('input', sync);
+    input.addEventListener('change', sync);
+    input.addEventListener('focus', sync);
+    sync();
+  }
+  document.addEventListener('focusin', function (e) { if (e.target && e.target.tagName === 'INPUT') addClear(e.target); });
+  document.addEventListener('input', function (e) { if (e.target && e.target.tagName === 'INPUT') addClear(e.target); }, true);
+
+  if (PAGE === 'settings') {
+    app.replaceChildren(live, renderAgentSettings(), renderNotifications());
+    live.replaceChildren(el('p', { class: 'muted', id: 'loading' }, 'Loading your settings…'));
+  } else if (PAGE === 'billing') {
+    app.replaceChildren(live);
+    live.replaceChildren(el('p', { class: 'muted', id: 'loading' }, 'Loading your billing details…'));
+  } else {
+    app.replaceChildren(live, renderProfile(), renderSupport(), renderCallDetailSection());
+    live.replaceChildren(el('p', { class: 'muted', id: 'loading' }, 'Loading your dashboard…'));
+  }
   load();
   setInterval(load, 60000); // keep the feed fresh without a reload
 })();
