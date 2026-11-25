@@ -171,7 +171,7 @@
           var tag = c.transferred ? 'Transferred' : label(c.outcome);
           var btn = el('button', { class: 'btn btn--ghost', type: 'button' },
             c.has_transcript ? 'View transcript' : 'View call');
-          btn.addEventListener('click', function () { openCallDetail(c.telnyx_conversation_id); });
+          btn.addEventListener('click', function () { openCallDetail(c.telnyx_conversation_id, btn); });
           return el('li', {},
             el('div', { class: 'feed__meta' }, el('span', {}, formatWhen(c.occurred_at)), el('span', { class: 'tag' }, tag)),
             el('div', {}, el('p', { class: 'feed__title' }, c.caller_display + (dur ? ' · ' + dur : '')),
@@ -556,36 +556,54 @@
       .catch(function () { /* the form still opens; the client fills it in */ });
   }
 
-  /** One call's transcript + recording. Lives outside the live refresh area
-   * so opening a transcript is never wiped by the 60-second redraw. The
-   * transcript is the words actually spoken, caller and agent turns in
-   * order, so the customer can check exactly what was said. The recording
-   * plays from a fresh Telnyx link each time the call is opened. */
-  var callDetailSection = null;
+  /** One call's transcript + recording, in a glass card popup (modal).
+   * Lives outside the live refresh area so opening a transcript is never
+   * wiped by the 60-second redraw. The transcript is the words actually
+   * spoken, caller and agent turns in order, so the customer can check
+   * exactly what was said. The recording plays from a fresh Telnyx link
+   * each time the call is opened. Closes on the Close button, a click on
+   * the backdrop, or Escape. */
+  var callDetailBackdrop = null;
   var callDetailBody = null;
+  var callDetailOpener = null;
 
   function renderCallDetailSection() {
     callDetailBody = el('div', {});
-    var back = el('button', { class: 'btn btn--ghost', type: 'button' }, 'Back to calls');
-    back.addEventListener('click', function () { closeCallDetail(); });
-    callDetailSection = el('section', { class: 'glass pad support__box', 'aria-labelledby': 'call-title', style: 'display: none' },
-      el('h2', { id: 'call-title', class: 'support__title' }, 'Call transcript'),
-      callDetailBody,
-      back);
-    callDetailSection.id = 'call-detail';
-    return callDetailSection;
+    var close = el('button', { class: 'btn btn--ghost modal-card__close', type: 'button', 'aria-label': 'Close call details' }, 'Close');
+    close.addEventListener('click', function () { closeCallDetail(); });
+    var card = el('section', { class: 'modal-card', role: 'dialog', 'aria-modal': 'true', 'aria-labelledby': 'call-title' },
+      el('div', { class: 'modal-card__head' },
+        el('h2', { id: 'call-title', class: 'support__title' }, 'Call transcript'),
+        close),
+      callDetailBody);
+    card.id = 'call-detail';
+    callDetailBackdrop = el('div', { class: 'modal-backdrop', style: 'display: none' }, card);
+    callDetailBackdrop.addEventListener('click', function (e) {
+      if (e.target === callDetailBackdrop) closeCallDetail();
+    });
+    return callDetailBackdrop;
   }
 
   function closeCallDetail() {
-    if (callDetailSection) callDetailSection.style.display = 'none';
+    if (callDetailBackdrop) callDetailBackdrop.style.display = 'none';
     if (callDetailBody) callDetailBody.replaceChildren();
+    document.body.style.overflow = '';
+    if (callDetailOpener && callDetailOpener.focus) callDetailOpener.focus();
+    callDetailOpener = null;
   }
 
-  function openCallDetail(conversationId) {
-    if (!callDetailSection || !callDetailBody) return;
-    callDetailSection.style.display = '';
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && callDetailBackdrop && callDetailBackdrop.style.display !== 'none') closeCallDetail();
+  });
+
+  function openCallDetail(conversationId, opener) {
+    if (!callDetailBackdrop || !callDetailBody) return;
+    callDetailOpener = opener || null;
+    callDetailBackdrop.style.display = '';
+    document.body.style.overflow = 'hidden';
     callDetailBody.replaceChildren(el('p', { class: 'muted' }, 'Loading the transcript…'));
-    callDetailSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    var closeBtn = callDetailBackdrop.querySelector('.modal-card__close');
+    if (closeBtn) closeBtn.focus();
     fetch('/app/calls/' + encodeURIComponent(conversationId), { credentials: 'same-origin', headers: { Accept: 'application/json' } })
       .then(function (r) {
         if (r.status === 401) { location.href = '/login'; return null; }
@@ -610,7 +628,7 @@
       c.summary_text && el('p', { class: 'feed__detail' }, c.summary_text));
     var recording = null;
     if (data.recording && data.recording.url) {
-      var audio = el('audio', { controls: 'controls', src: data.recording.url, preload: 'auto', style: 'width: 100%' });
+      var audio = el('audio', { controls: 'controls', src: data.recording.url, preload: 'auto' });
       recording = el('div', {},
         el('p', { class: 'card__update' }, 'Hear the call'),
         audio,
@@ -620,7 +638,7 @@
     }
     var transcript = null;
     if (c.transcript && c.transcript.length) {
-      transcript = el('ol', { class: 'glass feed' }, ...c.transcript.map(function (t) {
+      transcript = el('ol', { class: 'feed' }, ...c.transcript.map(function (t) {
         return el('li', {},
           el('div', { class: 'feed__meta' }, el('span', { class: 'tag' }, t.role === 'caller' ? 'Caller' : 'Agent')),
           el('p', { class: 'feed__detail' }, t.text));
