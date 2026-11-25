@@ -521,6 +521,42 @@ function clearLogo(clientId) {
   return row ? row.logo_filename : null;
 }
 
+// ---- Call-summary text notifications (src/notifications.js) -------------------
+// One row per client. Defaults are off with no number, so nothing is texted
+// until the client turns it on in the dashboard and saves a number.
+/** The client's saved notification settings, or the off-by-default shape when none exist. */
+function getNotificationSettings(clientId) {
+  const row = db.prepare(`SELECT sms_summary_enabled, sms_number, sms_urgent_only, updated_at
+    FROM client_notification_settings WHERE client_id = ?`).get(clientId);
+  if (!row) return { sms_summary_enabled: false, sms_number: '', sms_urgent_only: false, updated_at: null };
+  return {
+    sms_summary_enabled: row.sms_summary_enabled === 1,
+    sms_number: row.sms_number || '',
+    sms_urgent_only: row.sms_urgent_only === 1,
+    updated_at: row.updated_at,
+  };
+}
+
+/** Upserts validated notification settings for a client. Returns the saved shape. */
+function saveNotificationSettings(clientId, { smsSummaryEnabled, smsNumber, smsUrgentOnly }) {
+  const t = nowIso();
+  db.prepare(`INSERT INTO client_notification_settings
+    (client_id, sms_summary_enabled, sms_number, sms_urgent_only, updated_at)
+    VALUES (?,?,?,?,?)
+    ON CONFLICT(client_id) DO UPDATE SET
+      sms_summary_enabled = excluded.sms_summary_enabled, sms_number = excluded.sms_number,
+      sms_urgent_only = excluded.sms_urgent_only, updated_at = excluded.updated_at`)
+    .run(clientId, smsSummaryEnabled ? 1 : 0, smsNumber || null, smsUrgentOnly ? 1 : 0, t);
+  return getNotificationSettings(clientId);
+}
+
+/** The client's Front Desk number (their agent's Telnyx number), or null. Used as the SMS sender. */
+function getClientSendingNumber(clientId) {
+  const row = db.prepare(`SELECT telnyx_phone_number FROM telnyx_agents
+    WHERE client_id = ? ORDER BY id LIMIT 1`).get(clientId);
+  return row ? row.telnyx_phone_number : null;
+}
+
 module.exports = {
   createClient, createUser, setPassword, passwordExpired, listOnboardingPending, recordOnboardingReminder,
   addSubscription, setServiceStatus, createApiKey, revokeApiKey,
@@ -530,4 +566,5 @@ module.exports = {
   listTelnyxOverview, getTelnyxAgent, listCalls, getCallsUsage, getCallDetail,
   getAgentSettings, saveAgentSettingsLocal,
   getProfile, saveProfileLocal, setLogo, clearLogo,
+  getNotificationSettings, saveNotificationSettings, getClientSendingNumber,
 };

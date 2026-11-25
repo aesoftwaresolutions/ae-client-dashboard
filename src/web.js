@@ -12,6 +12,7 @@ const telnyxSync = require('./telnyx-sync');
 const agentSettings = require('./telnyx-agent-settings');
 const transcript = require('./telnyx-transcript');
 const profile = require('./client-profile');
+const notifications = require('./notifications');
 const fs = require('node:fs');
 
 // Brute-force protection (per IP and per email).
@@ -22,6 +23,7 @@ const supportLimiter = new sec.RateLimiter(10, 60 * 60_000); // per user
 const agentSettingsLimiter = new sec.RateLimiter(10, 60 * 60_000); // per user
 const callDetailLimiter = new sec.RateLimiter(30, 60 * 60_000); // per user; each open may call Telnyx for a fresh recording URL
 const profileLimiter = new sec.RateLimiter(10, 60 * 60_000); // per user; profile save, logo upload and logo removal
+const notificationLimiter = new sec.RateLimiter(10, 60 * 60_000); // per user; notification settings saves
 
 const SUPPORT_SUBJECT_MAX = 120;
 const SUPPORT_MESSAGE_MAX = 2000;
@@ -355,6 +357,39 @@ async function handleWeb(req, res, url) {
     res.writeHead(200, { 'Content-Type': mime, 'Content-Length': data.length });
     res.end(data);
     return true;
+  }
+
+  // --- Call-summary text notifications (client accounts; JSON, CSRF checked) ---
+  // GET /app/notification-settings returns the client's text settings.
+  // POST saves them: whether to text a summary after each call, the number
+  // to text, and whether to text every call or urgent calls only. The client
+  // id comes from the session, never the request, so a client can only ever
+  // touch their own settings. AE staff may pass ?client_id= on GET to read
+  // a client's settings (read-only).
+  if (pathname === '/app/notification-settings') {
+    const me = currentUser(req);
+    if (!me) return h.json(res, 401, { error: 'Not signed in' });
+    const admin = isAdmin(me);
+    const clientId = admin
+      ? String(url.searchParams.get('client_id') || '')
+      : (me.user.role === 'client' && me.client ? me.client.id : '');
+    if (!clientId) return h.json(res, 403, { error: 'Not a client account' });
+    if (method === 'GET') {
+      const settings = notifications.getNotificationSettings(clientId);
+      return h.json(res, 200, { ok: true, settings });
+    }
+    if (method !== 'POST') return h.json(res, 405, { error: 'Use POST' });
+    if (admin) return h.json(res, 403, { error: 'Staff cannot change a client notification setting from here.' });
+    const body = await h.readBody(req, 64 * 1024);
+    if (!h.checkCsrf(req, body)) return h.json(res, 400, { error: 'Your session expired. Please refresh the page and try again.' });
+    const rl = notificationLimiter.hit(me.user.id);
+    if (!rl.ok) {
+      res.setHeader('Retry-After', String(rl.retryAfter));
+      return h.json(res, 429, { error: 'You have saved several times in the last hour. Please try again later.' });
+    }
+    const result = notifications.saveNotificationSettings(me.client.id, body);
+    if (!result.ok) return h.json(res, 400, { error: result.error });
+    return h.json(res, 200, { ok: true, settings: result.settings });
   }
 
   // --- One call's transcript + recording (client accounts; JSON, GET) ---

@@ -276,6 +276,20 @@ CREATE TABLE IF NOT EXISTS telnyx_agent_settings (
   custom_instructions INTEGER NOT NULL DEFAULT 0,
   updated_at          TEXT NOT NULL
 );
+
+-- Call-summary text notifications (src/notifications.js). One row per client.
+-- The client turns on "text me a summary after each call" in the dashboard,
+-- picks the number to text and whether to text every call or urgent calls
+-- only. sms_number is stored as the digits the client typed; it is
+-- normalised to E.164 when a text is sent. Nothing is texted while
+-- sms_summary_enabled is 0.
+CREATE TABLE IF NOT EXISTS client_notification_settings (
+  client_id           TEXT PRIMARY KEY REFERENCES clients(id) ON DELETE CASCADE,
+  sms_summary_enabled INTEGER NOT NULL DEFAULT 0,
+  sms_number          TEXT,
+  sms_urgent_only     INTEGER NOT NULL DEFAULT 0,
+  updated_at          TEXT NOT NULL
+);
 `);
 
 // ---- Migrations for databases created before a schema change ----------------

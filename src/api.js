@@ -13,6 +13,7 @@ const sec = require('./security');
 const onboarding = require('./onboarding');
 const telnyx = require('./telnyx');
 const telnyxSync = require('./telnyx-sync');
+const notifications = require('./notifications');
 const { BY_SLUG } = require('./services');
 
 const eventLimiter = new sec.RateLimiter(config.eventRateLimitPerHour, 3_600_000); // per API key
@@ -88,7 +89,7 @@ function ingestTelnyx(key, input) {
   const summary = input.summary == null ? null : String(input.summary).trim().slice(0, 500);
   const duration = Number.isFinite(input.duration_seconds) ? Math.max(0, Math.round(input.duration_seconds)) : null;
 
-  return ingest(key, {
+  const eventId = ingest(key, {
     client_id: input.client_id,
     service,
     event_type: answered ? 'call_answered' : 'call_missed',
@@ -97,6 +98,22 @@ function ingestTelnyx(key, input) {
     occurred_at: input.started_at,
     metadata: { source: 'telnyx', duration_seconds: duration, last4: last4.length === 4 ? last4 : null },
   }, service);
+
+  // Text the summary when the client turned that on. Fire-and-forget: the
+  // webhook answer must not wait on Telnyx, and a failed text never fails
+  // the ingest. The outcome is logged either way.
+  notifications.maybeTextSummary(key.client_id, {
+    callerName: firstName,
+    callerNumber: String(input.caller_number || ''),
+    outcome: input.outcome,
+    summary: summary || '',
+    durationSeconds: duration,
+  }).then((r) => {
+    if (r.sent) console.log(`[api] sms summary sent to client ${key.client_id} (message ${r.id})`);
+    else if (r.error) console.error(`[api] sms summary FAILED for client ${key.client_id}: ${r.error}`);
+  }).catch((err) => console.error(`[api] sms summary error for client ${key.client_id}:`, err.message || err));
+
+  return eventId;
 }
 
 /**

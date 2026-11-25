@@ -556,6 +556,94 @@
       .catch(function () { /* the form still opens; the client fills it in */ });
   }
 
+  /** Call-summary text notifications. The client chooses whether to get a
+   * text after each call, which number to text, and whether to text every
+   * call or urgent calls only. The form lives outside the live refresh area
+   * so a half typed setting is never wiped. Fields are filled once from
+   * GET /app/notification-settings; later loads never overwrite what the
+   * client has typed. */
+  var notifyForm = null;
+  var notifyDirty = false;
+  var notifyPopulated = false;
+  var notifyStatus = null;
+  var notifyFields = {};
+
+  function renderNotifications() {
+    notifyStatus = el('p', { class: 'muted small', role: 'status', 'aria-live': 'polite' }, '');
+    notifyFields.enabled = el('input', { type: 'checkbox', name: 'sms_summary_enabled' });
+    notifyFields.number = el('input', { type: 'tel', name: 'sms_number', maxlength: '40', autocomplete: 'tel' });
+    notifyFields.urgentOnly = el('input', { type: 'checkbox', name: 'sms_urgent_only' });
+    var save = el('button', { class: 'btn', type: 'submit' }, 'Save notification settings');
+    notifyForm = el('form', { class: 'form support', novalidate: 'novalidate' },
+      el('label', { class: 'muted small' }, notifyFields.enabled, ' Text me a summary after each call'),
+      el('label', {}, 'Number to text', notifyFields.number, el('span', { class: 'muted small' }, 'The mobile number that gets the summary.')),
+      el('label', { class: 'muted small' }, notifyFields.urgentOnly, ' Only text me about urgent calls'),
+      save, notifyStatus);
+    notifyForm.addEventListener('input', function () { notifyDirty = true; });
+    notifyForm.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      if (notifyFields.enabled.checked && !notifyFields.number.value.trim()) {
+        notifyStatus.className = 'error';
+        notifyStatus.textContent = 'Please enter the phone number to text the summary to.';
+        return;
+      }
+      save.disabled = true;
+      notifyStatus.className = 'muted small';
+      notifyStatus.textContent = 'Saving…';
+      fetch('/app/notification-settings', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          _csrf: csrfToken(),
+          sms_summary_enabled: notifyFields.enabled.checked,
+          sms_number: notifyFields.number.value.trim(),
+          sms_urgent_only: notifyFields.urgentOnly.checked
+        })
+      })
+        .then(function (r) {
+          if (r.status === 401) { location.href = '/login'; return null; }
+          return r.json().then(function (d) { return { ok: r.ok, data: d }; });
+        })
+        .then(function (res) {
+          if (!res) return;
+          if (!res.ok) throw new Error((res.data && res.data.error) || 'We could not save that. Please try again.');
+          notifyDirty = false;
+          notifyPopulated = true;
+          notifyStatus.className = 'notice';
+          notifyStatus.textContent = 'Saved. Call summaries will be texted as you chose.';
+        })
+        .catch(function (err) {
+          notifyStatus.className = 'error';
+          notifyStatus.textContent = err.message || 'We could not save that. Please try again.';
+        })
+        .then(function () { save.disabled = false; });
+    });
+    var section = el('section', { class: 'glass pad support__box', 'aria-labelledby': 'notify-title' },
+      el('h2', { id: 'notify-title', class: 'support__title' }, 'Text me call summaries'),
+      el('p', { class: 'muted' }, 'Get a short text after a call ends, with who called and what they wanted. It comes from your Front Desk number.'),
+      notifyForm);
+    section.id = 'notification-settings';
+    return section;
+  }
+
+  function fillNotificationForm(s) {
+    notifyFields.enabled.checked = !!s.sms_summary_enabled;
+    notifyFields.number.value = s.sms_number || '';
+    notifyFields.urgentOnly.checked = !!s.sms_urgent_only;
+  }
+
+  function loadNotifications() {
+    if (notifyPopulated || notifyDirty) return;
+    fetch('/app/notification-settings', { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        if (!d || !d.settings || notifyDirty) return;
+        fillNotificationForm(d.settings);
+        notifyPopulated = true;
+      })
+      .catch(function () { /* the form still opens; the client fills it in */ });
+  }
+
   /** One call's transcript + recording, in a glass card popup (modal).
    * Lives outside the live refresh area so opening a transcript is never
    * wiped by the 60-second redraw. The transcript is the words actually
@@ -657,13 +745,13 @@
         if (!r.ok) throw new Error('bad status');
         return r.json();
       })
-      .then(function (data) { if (data) { render(data); populateAgentSettings(data); loadProfile(); } })
+      .then(function (data) { if (data) { render(data); populateAgentSettings(data); loadProfile(); loadNotifications(); } })
       .catch(function () {
         live.replaceChildren(el('p', { class: 'error', role: 'alert' }, 'We could not load your dashboard. Please refresh in a moment.'));
       });
   }
 
-  app.replaceChildren(live, renderProfile(), renderSupport(), renderAgentSettings(), renderCallDetailSection());
+  app.replaceChildren(live, renderProfile(), renderSupport(), renderAgentSettings(), renderNotifications(), renderCallDetailSection());
   live.replaceChildren(el('p', { class: 'muted', id: 'loading' }, 'Loading your dashboard…'));
   load();
   setInterval(load, 60000); // keep the feed fresh without a reload
