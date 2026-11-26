@@ -68,39 +68,6 @@ test('login rejects a wrong password and accepts the right one', async () => {
   assert.match(await page.text(), /Riverside Plumbing/);
 });
 
-test('the Settings page is its own page, for signed-in clients only', async () => {
-  const anon = await fetch(`${base}/settings`, { redirect: 'manual' });
-  assert.equal(anon.status, 303);
-  const { session } = await login(demo.email, demo.password);
-  const settings = await fetch(`${base}/settings`, { headers: { cookie: `ae_session=${session}` } });
-  assert.equal(settings.status, 200);
-  const html = await settings.text();
-  assert.match(html, /data-page="settings"/);
-  assert.match(html, /<a class="topbar__link" href="\/settings" aria-current="page">Settings<\/a>/);
-  const dash = await (await fetch(`${base}/dashboard`, { headers: { cookie: `ae_session=${session}` } })).text();
-  assert.match(dash, /data-page="dashboard"/);
-  assert.match(dash, /href="\/dashboard" aria-current="page"/);
-});
-
-test('the Billing page is its own page, for signed-in clients only', async () => {
-  const anon = await fetch(`${base}/billing`, { redirect: 'manual' });
-  assert.equal(anon.status, 303);
-  const { session } = await login(demo.email, demo.password);
-  const billing = await fetch(`${base}/billing`, { headers: { cookie: `ae_session=${session}` } });
-  assert.equal(billing.status, 200);
-  const html = await billing.text();
-  assert.match(html, /data-page="billing"/);
-  assert.match(html, /<a class="topbar__link" href="\/billing" aria-current="page">Billing<\/a>/);
-  // All three client pages carry the same three-link nav.
-  for (const p of ['/dashboard', '/settings', '/billing']) {
-    const page = await (await fetch(`${base}${p}`, { headers: { cookie: `ae_session=${session}` } })).text();
-    for (const href of ['/dashboard', '/settings', '/billing']) assert.ok(page.includes(`href="${href}"`), `${p} is missing the ${href} link`);
-  }
-  // Billing data still comes from /app/data, unchanged.
-  const data = await (await fetch(`${base}/app/data`, { headers: { cookie: `ae_session=${session}` } })).json();
-  assert.ok(data.billing && Array.isArray(data.billing.subscriptions));
-});
-
 test('POST without a CSRF token is rejected', async () => {
   const r = await fetch(`${base}/login`, { method: 'POST', body: new URLSearchParams({ email: demo.email, password: demo.password }) });
   assert.equal(r.status, 400);
@@ -259,6 +226,22 @@ test('Telnyx direct webhook: verifies Ed25519, rejects replays, stores once', as
   assert.ok(!rows.stdout.includes('555-0123'), 'call_summaries kept a full number');
 });
 
+test('call recording audio is proxied through the dashboard, not linked to S3', async () => {
+  // Unauthenticated requests are refused.
+  assert.equal((await fetch(`${base}/app/calls/conv-audio-12345/audio`)).status, 401);
+  const { session } = await login(demo.email, 'a-brand-new-pass'); // password was reset by the earlier test
+  const auth = { headers: { cookie: `ae_session=${session}` } };
+  // A conversation that does not belong to this client is not found.
+  assert.equal((await fetch(`${base}/app/calls/conv-does-not-exist-123/audio`, auth)).status, 404);
+  // A real call with a call_control_id, but the test env has no Telnyx API
+  // key, so no recording can be fetched and the endpoint answers 404 rather
+  // than crashing. The live streaming path is verified against the real
+  // dashboard after deploy.
+  const body = endedEvent('evt-audio', 'conv-audio-12345');
+  assert.equal((await signedPost(body)).status, 200);
+  assert.equal((await fetch(`${base}/app/calls/conv-audio-12345/audio`, auth)).status, 404);
+});
+
 test('Telnyx verifier fails closed without TELNYX_PUBLIC_KEY', () => {
   const code = `const t=require(${JSON.stringify(path.join(root, 'src/telnyx'))});
     const r=t.verifyTelnyxSignature({rawBody:Buffer.from('{}'),headers:{'telnyx-signature-ed25519':'x','telnyx-timestamp':String(Math.floor(Date.now()/1000))},publicKeyB64:''});
@@ -338,12 +321,6 @@ test('client can message AE support; admin sees it and marks it handled', async 
 
   assert.equal(run('scripts/manage.js', 'create-admin', '--email', 'staff@example.com', '--password', 'staff-password-123').status, 0);
   const admin = await login('staff@example.com', 'staff-password-123');
-  const adminSettings = await fetch(`${base}/settings`, { redirect: 'manual', headers: { cookie: `ae_session=${admin.session}` } });
-  assert.equal(adminSettings.status, 303);                                                  // staff have no client settings
-  assert.match(adminSettings.headers.get('location') || '', /\/dashboard$/);
-  const adminBilling = await fetch(`${base}/billing`, { redirect: 'manual', headers: { cookie: `ae_session=${admin.session}` } });
-  assert.equal(adminBilling.status, 303);                                                   // staff have no client billing
-  assert.match(adminBilling.headers.get('location') || '', /\/dashboard$/);
   const page = await (await fetch(`${base}/dashboard`, { headers: { cookie: `ae_session=${admin.session}` } })).text();
   assert.match(page, /Riverside Plumbing \(Demo\)/);
   assert.match(page, /Online Presence Management/);

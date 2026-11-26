@@ -169,18 +169,11 @@ async function handleWeb(req, res, url) {
   }
 
   // --- Dashboard (requires a session) ---
-  if (method === 'GET' && (pathname === '/dashboard' || pathname === '/settings' || pathname === '/billing' || pathname === '/app/data')) {
+  if (method === 'GET' && (pathname === '/dashboard' || pathname === '/app/data')) {
     const me = currentUser(req);
     if (!me) {
       if (pathname === '/app/data') return h.json(res, 401, { error: 'Not signed in' });
       return h.redirect(res, '/login');
-    }
-    // Client-only pages: Settings (AI Agent settings and text call summaries)
-    // and Billing (subscriptions, next payment, card, invoices). AE staff have
-    // neither, so they go back to their admin view.
-    if (pathname === '/settings' || pathname === '/billing') {
-      if (isAdmin(me) || !me.client) return h.redirect(res, '/dashboard');
-      return h.html(res, 200, views.dashboardPage({ businessName: me.client.business_name, csrf: h.ensureCsrf(req, res), page: pathname.slice(1) }));
     }
     if (pathname === '/dashboard') {
       const csrf = h.ensureCsrf(req, res);
@@ -205,7 +198,7 @@ async function handleWeb(req, res, url) {
     // /app/data: the client id comes from the session, never from the request.
     if (me.user.role !== 'client' || !me.client) return h.json(res, 403, { error: 'Not a client account' });
     const agent = store.getTelnyxAgent(me.client.id);
-    const data = {
+    return h.json(res, 200, {
       business_name: me.client.business_name,
       services: store.listServiceCards(me.client.id),
       activity: store.listActivity(me.client.id, 30),
@@ -214,11 +207,7 @@ async function handleWeb(req, res, url) {
       calls: store.listCalls(me.client.id, 50),
       calls_usage: store.getCallsUsage(me.client.id),
       agent_settings: agent ? store.getAgentSettings(agent.id) : null,
-    };
-    // AE's internal Telnyx balance, for Anthony's own login only. For every
-    // other client the key is not added at all (not even null).
-    if (store.isAeOwner(me)) data.telnyx_balance = store.getTelnyxBalance();
-    return h.json(res, 200, data);
+    });
   }
 
   // --- AI Agent settings (client accounts; JSON, CSRF checked) ---
@@ -439,6 +428,78 @@ async function handleWeb(req, res, url) {
     }
     const { call_control_id, ...call } = detail;
     return h.json(res, 200, { ok: true, call, recording });
+  }
+
+  // --- One call's recording audio, proxied through the dashboard (GET) ---
+  // GET /app/calls/{telnyx_conversation_id}/audio streams the call's mp3
+  // from the dashboard's own origin instead of handing the browser a
+  // presigned S3 link. The S3 link would not play in the browser's audio
+  // element (verified 2026-11-26: the player stayed at 0:00, "Unable to
+  // play media", even though the same link downloads fine with curl), so
+  // the server fetches the mp3 and serves it here. Same auth as the call
+  // detail: the client id comes from the session, never the request.
+  // Supports Range requests so the player can seek. The mp3 is fetched
+  // fresh on every request and never stored.
+  const audioMatch = /^\/app\/calls\/([A-Za-z0-9-]{10,120})\/audio$/.exec(pathname);
+  if (audioMatch && method === 'GET') {
+    const me = currentUser(req);
+    if (!me) return h.json(res, 401, { error: 'Not signed in' });
+    const admin = isAdmin(me);
+    const clientId = admin
+      ? String(url.searchParams.get('client_id') || '')
+      : (me.user.role === 'client' && me.client ? me.client.id : '');
+    if (!clientId) return h.json(res, 403, { error: 'Not a client account' });
+    const detail = store.getCallDetail(clientId, audioMatch[1]);
+    if (!detail || !detail.call_control_id) return h.json(res, 404, { error: 'No recording for this call.' });
+    let recording = null;
+    try {
+      recording = await transcript.fetchRecordingUrl(detail.call_control_id);
+    } catch (err) {
+      console.warn('[web] recording lookup failed:', err && err.message ? err.message : err);
+      return h.json(res, 404, { error: 'No recording for this call.' });
+    }
+    if (!recording || !recording.url) return h.json(res, 404, { error: 'No recording for this call.' });
+    let buf = null;
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 30_000);
+      try {
+        const upstream = await fetch(recording.url, { signal: ctrl.signal });
+        if (!upstream.ok) throw new Error(`recording download returned ${upstream.status}`);
+        buf = Buffer.from(await upstream.arrayBuffer());
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch (err) {
+      console.warn('[web] recording download failed:', err && err.message ? err.message : err);
+      return h.json(res, 502, { error: 'The recording could not be loaded. Please try again.' });
+    }
+    if (!buf || !buf.length) return h.json(res, 404, { error: 'No recording for this call.' });
+    const total = buf.length;
+    const range = String(req.headers.range || '');
+    const m = /^bytes=(\d*)-(\d*)$/.exec(range);
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Accept-Ranges', 'bytes');
+    res.setHeader('Cache-Control', 'no-store');
+    if (m) {
+      const start = m[1] === '' ? Math.max(0, total - (Number(m[2]) || 0)) : Math.min(Number(m[1]) || 0, total - 1);
+      const end = m[2] === '' ? total - 1 : Math.min(Number(m[2]) || 0, total - 1);
+      if (start > end || start >= total) {
+        res.setHeader('Content-Range', `bytes */${total}`);
+        res.writeHead(416);
+        res.end();
+        return;
+      }
+      res.setHeader('Content-Range', `bytes ${start}-${end}/${total}`);
+      res.setHeader('Content-Length', String(end - start + 1));
+      res.writeHead(206);
+      res.end(buf.subarray(start, end + 1));
+      return;
+    }
+    res.setHeader('Content-Length', String(total));
+    res.writeHead(200);
+    res.end(buf);
+    return;
   }
 
   // --- Message AE support (client accounts; JSON from the dashboard, CSRF checked) ---
