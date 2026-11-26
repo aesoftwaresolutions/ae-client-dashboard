@@ -111,7 +111,12 @@ async function fetchTranscript(conversationId, fetchFn = fetch) {
  */
 async function fetchRecordingUrl(callControlId, fetchFn = fetch) {
   if (!callControlId) return null;
-  const body = await telnyxGet(`/v2/calls/${encodeURIComponent(callControlId)}/recordings`, fetchFn);
+  // Do NOT percent-encode the id. Telnyx v3 call_control_ids are
+  // "v3:" plus a base64url string, and Telnyx returns 404 when the colon
+  // is encoded as %3A (verified live 2026-11-25: the encoded form 404s,
+  // the raw form returns the recording). The id contains only
+  // URL-safe characters, so it is safe to use as-is in the path.
+  const body = await telnyxGet(`/v2/calls/${callControlId}/recordings`, fetchFn);
   const rows = Array.isArray(body.data) ? body.data : [];
   for (const r of rows) {
     if (!r || typeof r !== 'object') continue;

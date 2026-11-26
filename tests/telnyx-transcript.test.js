@@ -210,6 +210,22 @@ test('a call with no transcript shows a clear no-transcript state, not an error'
   assert.equal(listed.has_transcript, false);
 });
 
+test('fetchRecordingUrl keeps the v3 call_control_id unencoded in the URL', async () => {
+  // Regression: encodeURIComponent turned "v3:..." into "v3%3A...", and the
+  // real Telnyx API 404s on that form (verified live 2026-11-25), so the
+  // dashboard showed "No recording for this call" for every call even
+  // though the recording existed. The colon must stay literal.
+  let seenUrl = '';
+  const captureFetch = async (url) => {
+    seenUrl = url;
+    return { ok: true, status: 200, json: async () => ({ data: [{ id: 'rec-1', status: 'completed', duration_millis: 65000, download_urls: { mp3: 'https://example.com/recording.mp3' } }] }) };
+  };
+  const found = await transcript.fetchRecordingUrl(CC_A, captureFetch);
+  assert.ok(found);
+  assert.ok(seenUrl.includes('/v2/calls/v3:call-control-a/recordings'), `URL was ${seenUrl}`);
+  assert.equal(seenUrl.includes('%3A'), false);
+});
+
 test('fetchRecordingUrl returns the mp3 link for a completed recording and null when there is none', async () => {
   const found = await transcript.fetchRecordingUrl(CC_A, stubFetch);
   assert.ok(found);
