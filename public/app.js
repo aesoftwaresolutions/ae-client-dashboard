@@ -482,20 +482,28 @@
     }
     agentFields.name = el('input', { type: 'text', name: 'agent_name', maxlength: '80', autocomplete: 'off', required: 'required' });
     agentFields.greeting = el('input', { type: 'text', name: 'greeting', maxlength: '500', autocomplete: 'off', required: 'required' });
+    agentFields.voice = el('select', { name: 'voice' });
+    agentFields.voiceSpeed = el('select', { name: 'voice_speed' },
+      el('option', { value: '0.75' }, 'Slower (0.75x)'),
+      el('option', { value: '1', selected: 'selected' }, 'Normal (1x)'),
+      el('option', { value: '1.25' }, 'Faster (1.25x)'),
+      el('option', { value: '1.5' }, 'Fast (1.5x)'));
     agentFields.description = el('textarea', { name: 'business_description', rows: '3', maxlength: '1000' });
     agentFields.services = el('textarea', { name: 'services_offered', rows: '3', maxlength: '1000' });
     agentFields.hours = el('input', { type: 'text', name: 'business_hours', maxlength: '200', autocomplete: 'off' });
-    agentFields.transfer = el('p', { class: 'card__update' }, '');
+    agentFields.transfer = el('input', { type: 'tel', name: 'transfer_phone', maxlength: '20', autocomplete: 'tel' });
     agentFields.instructions = el('textarea', { name: 'instructions', rows: '6', maxlength: '20000' });
     agentFields.useCustom = el('input', { type: 'checkbox', role: 'switch', name: 'use_custom_instructions' });
     var save = el('button', { class: 'btn', type: 'submit' }, 'Save agent settings');
     agentForm = el('form', { class: 'form support', novalidate: 'novalidate' },
       field('agent_name', 'Agent name', agentFields.name, 'What callers hear as the agent\u2019s name.'),
       field('greeting', 'Greeting', agentFields.greeting, 'The first thing your agent says when it answers.'),
+      field('voice', 'Voice', agentFields.voice, 'The voice your agent speaks with.'),
+      field('voice_speed', 'Speaking speed', agentFields.voiceSpeed, 'How fast your agent talks.'),
       field('business_description', 'What your business does', agentFields.description, 'A sentence or two, in your own words.'),
       field('services_offered', 'Services you offer', agentFields.services, 'List them separated by commas, or one per line.'),
       field('business_hours', 'Business hours', agentFields.hours, 'For example: Monday to Friday, 9am to 5pm.'),
-      el('label', {}, 'Urgent calls go to', agentFields.transfer, el('span', { class: 'muted small' }, 'To change this number, send us a message below.')),
+      field('transfer_phone', 'Urgent calls go to', agentFields.transfer, 'The number urgent calls transfer to.'),
       field('instructions', 'Agent instructions', agentFields.instructions,
         'Leave this blank and the instructions are built from the details above. Or write your own and tick the box below.'),
       save, agentStatus);
@@ -519,6 +527,9 @@
           _csrf: csrfToken(),
           agent_name: name,
           greeting: greeting,
+          voice: agentFields.voice.value,
+          voice_speed: agentFields.voiceSpeed.value,
+          transfer_phone: agentFields.transfer.value.trim(),
           business_description: agentFields.description.value.trim(),
           services_offered: agentFields.services.value.trim(),
           business_hours: agentFields.hours.value.trim(),
@@ -561,17 +572,39 @@
     agentFields.hours.value = s.business_hours || '';
     agentFields.instructions.value = s.instructions || '';
     agentFields.useCustom.checked = !!s.custom_instructions;
+    if (s.voice) agentFields.voice.value = s.voice;
+    if (s.voice_speed !== undefined && s.voice_speed !== null && s.voice_speed !== '') agentFields.voiceSpeed.value = String(s.voice_speed);
+    agentFields.transfer.value = s.transfer_phone || '';
+  }
+
+  /** Fill the voice dropdown from the list the server sends. Kept separate
+   * so a saved voice that is no longer offered still shows as an option. */
+  function fillVoiceOptions(voices, current) {
+    var select = agentFields.voice;
+    if (!select || select.options.length > 0) return;
+    (voices || []).forEach(function (v) {
+      select.appendChild(el('option', { value: v.id }, v.name + ' — ' + v.desc + ' (' + v.gender + ')'));
+    });
+    if (current && !Array.prototype.some.call(select.options, function (o) { return o.value === current; })) {
+      select.appendChild(el('option', { value: current }, 'Current voice'));
+    }
+    if (current) select.value = current;
   }
 
   function populateAgentSettings(data) {
     var section = document.getElementById('agent-settings');
     if (!section || !data.telnyx_agent) return;
     section.style.display = '';
-    agentFields.transfer.textContent = data.telnyx_agent.transfer_phone_number || 'Not set';
     if (agentPopulated || agentDirty) return;
     if (data.agent_settings) {
+      // Saved settings exist: fill the form, and fetch the voice list so the
+      // dropdown is populated even though the settings came from /app/data.
       fillAgentForm(data.agent_settings);
       agentPopulated = true;
+      fetch('/app/agent-settings', { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) { if (d && d.voices) fillVoiceOptions(d.voices, data.agent_settings.voice); })
+        .catch(function () { /* the voice list is a nicety; the form still works */ });
       return;
     }
     // No saved settings yet: pre-fill from the live assistant.
@@ -579,6 +612,7 @@
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (d) {
         if (!d || !d.settings || agentDirty) return;
+        if (d.voices) fillVoiceOptions(d.voices, d.settings.voice);
         fillAgentForm(d.settings);
         agentPopulated = true;
       })

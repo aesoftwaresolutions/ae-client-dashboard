@@ -30,7 +30,9 @@ function makeStub({ patchStatus = 200, patchBody = null } = {}) {
     calls.push({ url, method: opts.method || 'GET', body: opts.body ? JSON.parse(opts.body) : undefined });
     const json = async () => {
       if ((opts.method || 'GET') === 'GET' && url.includes('/v2/ai/assistants/')) {
-        return { data: { id: ASSISTANT_ID, name: 'Aria', greeting: 'Hello, thanks for calling.', instructions: 'Live instructions from Telnyx.', model: 'zai-org/GLM-5.3-Flash' } };
+        return { data: { id: ASSISTANT_ID, name: 'Aria', greeting: 'Hello, thanks for calling.', instructions: 'Live instructions from Telnyx.', model: 'zai-org/GLM-5.3-Flash',
+          voice_settings: { voice: 'Telnyx.Ultra.f786b574-daa5-4673-aa0c-cbe3e8534c02', voice_speed: 1 },
+          tools: [{ tool_id: 'tool-1', type: 'transfer', timeout_ms: 5000, shared: false, transfer: { from: NUMBER, targets: [{ name: 'Owner', to: '+17179771021' }] } }] } };
       }
       if (opts.method === 'PATCH' && url.includes('/v2/ai/assistants/')) {
         if (patchStatus !== 200) return { errors: [{ detail: 'assistant not found' }] };
@@ -110,6 +112,93 @@ test('custom instructions are used verbatim', async () => {
   const saved = store.getAgentSettings(store.getTelnyxAgent(clientA).id);
   assert.equal(saved.custom_instructions, true);
   assert.equal(saved.instructions, 'Answer the phone and be nice.');
+});
+
+test('changing the voice PATCHes voice_settings and stores it locally', async () => {
+  const { fetchFn, calls } = makeStub();
+  const clara = settings.VOICES.find((v) => v.name === 'Clara').id;
+  const result = await settings.saveAgentSettings({
+    clientId: clientA,
+    fields: { ...FIELDS, voice: clara },
+    fetchFn,
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  const patch = calls.find((c) => c.method === 'PATCH');
+  assert.ok(patch.body.voice_settings, 'expected voice_settings in the PATCH');
+  assert.equal(patch.body.voice_settings.voice, clara);
+  // The rest of the live voice settings are carried over, not wiped.
+  assert.equal(patch.body.voice_settings.voice_speed, 1);
+  const saved = store.getAgentSettings(store.getTelnyxAgent(clientA).id);
+  assert.equal(saved.voice, clara);
+});
+
+test('changing the voice speed PATCHes voice_settings without touching the voice', async () => {
+  const { fetchFn, calls } = makeStub();
+  const result = await settings.saveAgentSettings({
+    clientId: clientA,
+    fields: { ...FIELDS, voice_speed: '1.25' },
+    fetchFn,
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  const patch = calls.find((c) => c.method === 'PATCH');
+  assert.equal(patch.body.voice_settings.voice_speed, 1.25);
+  assert.equal(patch.body.voice_settings.voice, 'Telnyx.Ultra.f786b574-daa5-4673-aa0c-cbe3e8534c02');
+  const saved = store.getAgentSettings(store.getTelnyxAgent(clientA).id);
+  assert.equal(saved.voice_speed, 1.25);
+});
+
+test('changing the transfer number retargets the transfer tool and stores it', async () => {
+  const { fetchFn, calls } = makeStub();
+  const result = await settings.saveAgentSettings({
+    clientId: clientA,
+    fields: { ...FIELDS, transfer_phone: '717-555-0199' },
+    fetchFn,
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  const patch = calls.find((c) => c.method === 'PATCH');
+  assert.ok(patch.body.tools, 'expected tools in the PATCH');
+  const tool = patch.body.tools.find((t) => t.type === 'transfer');
+  assert.ok(tool, 'expected a transfer tool');
+  assert.equal(tool.transfer.targets[0].to, '+17175550199');
+  // The tool itself is preserved (id, timeout, from number).
+  assert.equal(tool.tool_id, 'tool-1');
+  assert.equal(tool.transfer.from, NUMBER);
+  const saved = store.getAgentSettings(store.getTelnyxAgent(clientA).id);
+  assert.equal(saved.transfer_phone, '+17175550199');
+  const agent = db.prepare('SELECT transfer_phone_number FROM telnyx_agents WHERE telnyx_assistant_id = ?').get(ASSISTANT_ID);
+  assert.equal(agent.transfer_phone_number, '+17175550199');
+});
+
+test('an unchanged voice and transfer number are not sent to Telnyx', async () => {
+  const { fetchFn, calls } = makeStub();
+  // Use the transfer number currently stored for this agent (an earlier test
+  // may have changed it), so the number is genuinely unchanged here.
+  const currentTransfer = db.prepare('SELECT transfer_phone_number FROM telnyx_agents WHERE telnyx_assistant_id = ?').get(ASSISTANT_ID).transfer_phone_number;
+  const result = await settings.saveAgentSettings({
+    clientId: clientA,
+    fields: { ...FIELDS, voice: 'Telnyx.Ultra.f786b574-daa5-4673-aa0c-cbe3e8534c02', voice_speed: '1', transfer_phone: currentTransfer },
+    fetchFn,
+  });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  const patch = calls.find((c) => c.method === 'PATCH');
+  assert.equal('voice_settings' in patch.body, false, 'unchanged voice should not be PATCHed');
+  assert.equal('tools' in patch.body, false, 'unchanged transfer number should not be PATCHed');
+});
+
+test('an unknown voice, a bad speed and a bad transfer number are rejected before any PATCH', async () => {
+  const { fetchFn, calls } = makeStub();
+  const badVoice = await settings.saveAgentSettings({ clientId: clientA, fields: { ...FIELDS, voice: 'Telnyx.Ultra.not-a-real-voice' }, fetchFn });
+  assert.equal(badVoice.ok, false);
+  assert.match(badVoice.error, /voice/);
+  const badSpeed = await settings.saveAgentSettings({ clientId: clientA, fields: { ...FIELDS, voice_speed: '3' }, fetchFn });
+  assert.equal(badSpeed.ok, false);
+  assert.match(badSpeed.error, /speed/);
+  const badSpeedText = await settings.saveAgentSettings({ clientId: clientA, fields: { ...FIELDS, voice_speed: 'fast' }, fetchFn });
+  assert.equal(badSpeedText.ok, false);
+  const badPhone = await settings.saveAgentSettings({ clientId: clientA, fields: { ...FIELDS, transfer_phone: '555' }, fetchFn });
+  assert.equal(badPhone.ok, false);
+  assert.match(badPhone.error, /phone number/);
+  assert.equal(calls.filter((c) => c.method === 'PATCH').length, 0);
 });
 
 test('a client cannot edit another client\u2019s agent', async () => {

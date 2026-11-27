@@ -466,7 +466,7 @@ function getCallsUsage(clientId) {
 /** The client's saved AI Agent settings, or null when they have never saved any. */
 function getAgentSettings(agentId) {
   const row = db.prepare(`SELECT agent_name, greeting, business_description, services_offered,
-    business_hours, instructions, custom_instructions, updated_at
+    business_hours, instructions, custom_instructions, voice, voice_speed, transfer_phone, updated_at
     FROM telnyx_agent_settings WHERE agent_id = ?`).get(agentId);
   if (!row) return null;
   return { ...row, custom_instructions: row.custom_instructions === 1 };
@@ -478,22 +478,28 @@ function getAgentSettings(agentId) {
  * the client set, the hash of the instructions that were applied, and the
  * sync time. Never touches call_summaries, balance or numbers.
  */
-function saveAgentSettingsLocal(agentId, { agentName, greeting, businessDescription, servicesOffered, businessHours, instructions, customInstructions }) {
+function saveAgentSettingsLocal(agentId, { agentName, greeting, businessDescription, servicesOffered, businessHours, instructions, customInstructions, voice, voiceSpeed, transferPhone }) {
   const t = nowIso();
   const hash = sha256(instructions || '');
   tx(() => {
     db.prepare(`INSERT INTO telnyx_agent_settings
-      (agent_id, agent_name, greeting, business_description, services_offered, business_hours, instructions, custom_instructions, updated_at)
-      VALUES (?,?,?,?,?,?,?,?,?)
+      (agent_id, agent_name, greeting, business_description, services_offered, business_hours, instructions, custom_instructions, voice, voice_speed, transfer_phone, updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(agent_id) DO UPDATE SET
         agent_name = excluded.agent_name, greeting = excluded.greeting,
         business_description = excluded.business_description, services_offered = excluded.services_offered,
         business_hours = excluded.business_hours, instructions = excluded.instructions,
-        custom_instructions = excluded.custom_instructions, updated_at = excluded.updated_at`)
+        custom_instructions = excluded.custom_instructions, voice = excluded.voice,
+        voice_speed = excluded.voice_speed, transfer_phone = excluded.transfer_phone,
+        updated_at = excluded.updated_at`)
       .run(agentId, agentName || null, greeting || null, businessDescription || null, servicesOffered || null,
-        businessHours || null, instructions || null, customInstructions ? 1 : 0, t);
+        businessHours || null, instructions || null, customInstructions ? 1 : 0,
+        voice || null, voiceSpeed == null ? null : voiceSpeed, transferPhone || null, t);
     db.prepare(`UPDATE telnyx_agents SET name = ?, instructions_hash = ?, last_synced_at = ?, updated_at = ?
       WHERE id = ?`).run(agentName || null, hash, t, t, agentId);
+    if (transferPhone) {
+      db.prepare(`UPDATE telnyx_agents SET transfer_phone_number = ? WHERE id = ?`).run(transferPhone, agentId);
+    }
   });
   return getAgentSettings(agentId);
 }

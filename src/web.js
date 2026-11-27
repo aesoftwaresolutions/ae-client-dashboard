@@ -234,7 +234,7 @@ async function handleWeb(req, res, url) {
     if (method === 'GET') {
       const effective = await agentSettings.getEffectiveSettings(me.client.id);
       if (!effective) return h.json(res, 404, { error: 'No Front Desk agent yet. Once AE sets one up for you, its settings will appear here.' });
-      return h.json(res, 200, { ok: true, agent: effective.agent, settings: effective.settings, from_telnyx: effective.fromTelnyx });
+      return h.json(res, 200, { ok: true, agent: effective.agent, settings: effective.settings, from_telnyx: effective.fromTelnyx, voices: agentSettings.VOICES });
     }
     if (method !== 'POST') return h.json(res, 405, { error: 'Use POST' });
     const body = await h.readBody(req, 64 * 1024);

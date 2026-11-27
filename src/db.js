@@ -274,6 +274,9 @@ CREATE TABLE IF NOT EXISTS telnyx_agent_settings (
   business_hours      TEXT,
   instructions        TEXT,
   custom_instructions INTEGER NOT NULL DEFAULT 0,
+  voice               TEXT,
+  voice_speed         REAL,
+  transfer_phone      TEXT,
   updated_at          TEXT NOT NULL
 );
 
@@ -313,6 +316,14 @@ CREATE TABLE IF NOT EXISTS client_notification_settings (
   for (const col of ['name', 'model', 'tools_json', 'instructions_hash', 'last_synced_at']) {
     if (!cols.has(col)) db.exec(`ALTER TABLE telnyx_agents ADD COLUMN ${col} TEXT`);
   }
+}
+// Agent settings: voice, voice speed and transfer number are now editable in
+// the dashboard and pushed to Telnyx; older databases gain the columns here.
+{
+  const cols = new Set(db.prepare('PRAGMA table_info(telnyx_agent_settings)').all().map((c) => c.name));
+  if (!cols.has('voice')) db.exec('ALTER TABLE telnyx_agent_settings ADD COLUMN voice TEXT');
+  if (!cols.has('voice_speed')) db.exec('ALTER TABLE telnyx_agent_settings ADD COLUMN voice_speed REAL');
+  if (!cols.has('transfer_phone')) db.exec('ALTER TABLE telnyx_agent_settings ADD COLUMN transfer_phone TEXT');
 }
 // Telnyx active sync: caller number (masked on display) and the transfer flag on call_summaries.
 {
