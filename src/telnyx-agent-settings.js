@@ -143,7 +143,29 @@ async function getEffectiveSettings(clientId, fetchFn = fetch) {
   const agent = ownAgent(clientId);
   if (!agent) return null;
   const saved = store.getAgentSettings(agent.id);
-  if (saved) return { agent, settings: saved, fromTelnyx: false };
+  if (saved) {
+    // Settings saved before the voice / speed / transfer fields existed have
+    // those columns empty. Backfill them from the live assistant (voice and
+    // speed) and the agent row (transfer number) so the form never shows a
+    // blank voice or transfer number for a setting that is actually live.
+    let live = null;
+    if ((!saved.voice || saved.voice_speed == null || !saved.transfer_phone) && config.telnyxApiKey) {
+      try {
+        const body = await telnyxGetAssistant(agent.telnyx_assistant_id, fetchFn);
+        live = body && body.data ? body.data : body;
+      } catch (err) {
+        console.warn('[agent-settings] live backfill failed:', err.message);
+      }
+    }
+    const backfilled = {
+      ...saved,
+      voice: saved.voice || (live && live.voice_settings && live.voice_settings.voice) || '',
+      voice_speed: saved.voice_speed != null ? saved.voice_speed
+        : (live && live.voice_settings && typeof live.voice_settings.voice_speed === 'number' ? live.voice_settings.voice_speed : 1),
+      transfer_phone: saved.transfer_phone || agent.transfer_phone_number || '',
+    };
+    return { agent, settings: backfilled, fromTelnyx: false };
+  }
   let live = null;
   if (config.telnyxApiKey) {
     try {

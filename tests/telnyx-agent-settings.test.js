@@ -250,6 +250,28 @@ test('without saved settings the form pre-fills from the live assistant', async 
   assert.equal(effective.settings.greeting, 'Hello, thanks for calling.');
   assert.equal(effective.settings.instructions, 'Live instructions from Telnyx.');
   assert.equal(effective.settings.business_description, '');
+  assert.equal(effective.settings.voice, 'Telnyx.Ultra.f786b574-daa5-4673-aa0c-cbe3e8534c02');
+  assert.equal(effective.settings.voice_speed, 1);
+  assert.equal(effective.settings.transfer_phone, '+17179771022');
+});
+
+test('saved settings from before the voice fields existed are backfilled from the live agent', async () => {
+  // Client A saved settings when there was no voice or transfer column, so
+  // those are empty locally; the form must still show the live voice and the
+  // agent row's transfer number instead of a blank field.
+  const { fetchFn } = makeStub();
+  const agentId = store.getTelnyxAgent(clientA).id;
+  const dbmod = require(path.join(root, 'src/db'));
+  dbmod.db.prepare('UPDATE telnyx_agent_settings SET voice = NULL, voice_speed = NULL, transfer_phone = NULL WHERE agent_id = ?').run(agentId);
+  // The agent row's transfer number is whatever an earlier test set it to;
+  // read it so this test does not depend on test order.
+  const currentTransfer = dbmod.db.prepare('SELECT transfer_phone_number FROM telnyx_agents WHERE id = ?').get(agentId).transfer_phone_number;
+  const effective = await settings.getEffectiveSettings(clientA, fetchFn);
+  assert.ok(effective);
+  assert.equal(effective.fromTelnyx, false);
+  assert.equal(effective.settings.voice, 'Telnyx.Ultra.f786b574-daa5-4673-aa0c-cbe3e8534c02');
+  assert.equal(effective.settings.voice_speed, 1);
+  assert.equal(effective.settings.transfer_phone, currentTransfer);
 });
 
 test('buildInstructions is plain and complete from the business fields', () => {
