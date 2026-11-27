@@ -314,3 +314,15 @@ input[type="range"]::-moz-range-thumb { width: 28px; height: 28px; border-radius
   input[type="checkbox"][role="switch"], input[type="range"] { -webkit-appearance: auto; appearance: auto; }
   input[type="checkbox"][role="switch"]::before { display: none; }
 }
+
+/* Unified inbox: one row per conversation, clickable; unread rows stand out. */
+.inbox__list { list-style: none; margin: 0; padding: 0; }
+.inbox__row { cursor: pointer; }
+.inbox__row:hover { background: var(--lg-fill-hover); }
+.inbox__row:focus-visible { outline: 2px solid var(--focus, #ffffff); outline-offset: -2px; }
+.inbox__row--unread .feed__title { font-weight: 700; }
+.inbox__unread { background: #ffffff; color: #0a0a0a; font-weight: 600; }
+.inbox__detail-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; margin: 1rem 0; }
+.inbox__detail-head h2 { margin: 0; }
+.inbox__messages li { grid-template-columns: 9.5rem 1fr; }
+@media (max-width: 560px) { .inbox__messages li { grid-template-columns: 1fr; } }

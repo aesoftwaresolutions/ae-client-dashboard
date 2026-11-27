@@ -103,6 +103,53 @@ test('fixture run with --commit-watermark advances the watermark', () => {
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('fixture run with --mock-telnyx provisions the client automatically', () => {
+  const dir = tmpDataDir();
+  try {
+    runFulfill(dir, ['--set-watermark', '1792707816']);
+    const f = fixtureFile(dir, [SFD]);
+    const r = runFulfill(dir, ['--fixture', f, '--mock-telnyx']);
+    assert.equal(r.status, 0, r.stderr);
+    const summary = JSON.parse(r.stdout);
+    assert.equal(summary.failed.length, 0);
+    const sfd = JSON.parse(fs.readFileSync(path.join(dir, 'fulfillment/ch_TESTSFD001.json'), 'utf8'));
+    assert.equal(sfd.product, 'Social Front Desk');
+    assert.ok(sfd.provisioning, 'record carries provisioning state');
+    assert.equal(sfd.provisioning.done, true);
+    assert.equal(sfd.provisioning.steps.client.status, 'done');
+    assert.equal(sfd.provisioning.steps.user.status, 'done');
+    assert.equal(sfd.provisioning.steps.subscription.status, 'done');
+    assert.equal(sfd.provisioning.steps.agent.status, 'done');
+    assert.equal(sfd.provisioning.steps.number.status, 'done');
+    assert.equal(sfd.provisioning.steps.number.detail.phone_number, '+17175550100');
+    assert.equal(sfd.provisioning.steps.link.status, 'done');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('new Front Desk $179 tier and Total Presence prices are recognized and provision', () => {
+  const dir = tmpDataDir();
+  try {
+    runFulfill(dir, ['--set-watermark', '1792707816']);
+    const fd179 = { id: 'ch_TESTFD179', price_id: 'price_1UfAx7Epan91NQaRBLT2tIEk', amount: 25400, created: 1795339005, status: 'succeeded', refunded: false };
+    const tp = { id: 'ch_TESTTP001', price_id: 'price_1UfAuSEpan91NQaRyig1Ff7E', amount: 19900, created: 1795339006, status: 'succeeded', refunded: false };
+    const f = fixtureFile(dir, [fd179, tp]);
+    const r = runFulfill(dir, ['--fixture', f, '--mock-telnyx']);
+    assert.equal(r.status, 0, r.stderr);
+    const summary = JSON.parse(r.stdout);
+    assert.equal(summary.failed.length, 0);
+    const fd = JSON.parse(fs.readFileSync(path.join(dir, 'fulfillment/ch_TESTFD179.json'), 'utf8'));
+    assert.equal(fd.product, 'Front Desk 150');
+    assert.equal(fd.provisioning.done, true);
+    assert.equal(fd.provisioning.steps.agent.status, 'done');
+    assert.equal(fd.provisioning.steps.link.status, 'done');
+    const total = JSON.parse(fs.readFileSync(path.join(dir, 'fulfillment/ch_TESTTP001.json'), 'utf8'));
+    assert.equal(total.product, 'Total Presence');
+    assert.equal(total.provisioning.done, true);
+    assert.equal(total.provisioning.steps.subscription.detail.service, 'total-presence');
+    assert.equal(total.provisioning.steps.agent, undefined, 'Total Presence gets no phone agent');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('setup fee folds into its subscription and unknown prices are flagged', () => {
   const dir = tmpDataDir();
   try {

@@ -41,6 +41,7 @@
 //   (no flag)          the real daily check.
 const fs = require('node:fs');
 const path = require('node:path');
+const provisioning = require('../src/provisioning');
 
 const root = path.join(__dirname, '..');
 const dataDir = path.resolve(root, process.env.DATA_DIR || 'data');
@@ -56,6 +57,11 @@ const STRIPE_API = 'https://api.stripe.com/v1';
 const PRICE_MAP = {
   price_1UOimzEpan91NQaRyCECCUwA: { name: 'Missed-Lead Audit', kind: 'one-time', label: '$250' },
   price_1UOin8Epan91NQaRv83sFT3x: { name: 'Front Desk', kind: 'subscription', label: '$99/mo' },
+  price_1UfAx7Epan91NQaRBLT2tIEk: { name: 'Front Desk 150', kind: 'subscription', label: '$179/mo' },
+  price_1UfAyfEpan91NQaREmELXUBs: { name: 'Front Desk 300', kind: 'subscription', label: '$309/mo' },
+  price_1UetDeEpan91NQaRptkWjweH: { name: 'Front Desk setup fee', kind: 'setup-fee', label: '$75' },
+  price_1UfAuSEpan91NQaRyig1Ff7E: { name: 'Total Presence', kind: 'subscription', label: '$199/mo' },
+  price_1UfB0OEpan91NQaRJBQEQFhy: { name: 'Business Starter Package', kind: 'subscription', label: '$50/mo' },
   price_1UOin8Epan91NQaR3tBlMUrd: { name: 'Always-On Front Desk', kind: 'subscription', label: '$250/mo' },
   price_1UOin8Epan91NQaRcAmwIkR7: { name: 'Online Presence Management', kind: 'subscription', label: '$199/mo' },
   price_1USQSFEpan91NQaRbzEm3AQC: { name: 'AI Setup Guides Subscription', kind: 'subscription', label: '$19/mo' },
@@ -97,6 +103,7 @@ const SETUP_GUIDE_FILE = {
 
 // Which subscription a setup fee folds into (fee price id -> plan name).
 const SETUP_FEE_PLAN = {
+  price_1UetDeEpan91NQaRptkWjweH: 'Front Desk',
   price_1USfJFEpan91NQaR9fMma2uv: 'Social Management',
   price_1USi2YEpan91NQaRj9ZueK39: 'Social Front Desk',
   price_1USi2aEpan91NQaRifSw6XE2: 'Social Management Growth',
@@ -369,11 +376,16 @@ function buildRecord(charge, buyer, identified, founding) {
     rec.muse_setup = museSetupInfo(buyer, product);
     rec.needs_anthony.push(`Muse setup package for ${business}: render the two package files from the automation templates (agent step), then send only if AUTO-SEND says ARMED.`);
   } else {
-    // Front Desk, Always-On Front Desk, Online Presence Management.
+    // Front Desk (all tiers), Always-On Front Desk, Online Presence
+    // Management, Total Presence, Business Starter Package.
     const items = {
       'Front Desk': 'business hours, call-handling instructions, greeting script, phone number provisioning',
+      'Front Desk 150': 'business hours, call-handling instructions, greeting script, phone number provisioning',
+      'Front Desk 300': 'business hours, call-handling instructions, greeting script, phone number provisioning',
       'Always-On Front Desk': 'business hours, call-handling instructions, greeting script, phone number provisioning',
       'Online Presence Management': 'Google Business Profile manager access, business details',
+      'Total Presence': 'business hours, call-handling instructions, greeting script, phone number provisioning, Google Business Profile manager access, social account access',
+      'Business Starter Package': 'business details, logo and brand assets',
     }[product] || 'kickoff call time and service details';
     rec.checklist = [`Collect or provision: ${items}.`];
     rec.draft_email = draftWelcomeEmail(buyer, product, start);
@@ -399,6 +411,46 @@ function museSetupInfo(buyer, product) {
   };
 }
 
+// --- provisioning (automatic client setup, no human or AI needed) ------------
+
+// A canned Telnyx for fixture runs and tests: returns a fake assistant id
+// and a fake phone number so the full provisioning flow can be exercised
+// without touching the live Telnyx account.
+function mockTelnyxFetch(url, opts) {
+  const method = (opts && opts.method) || 'GET';
+  const ok = (data) => ({ ok: true, status: 200, text: async () => JSON.stringify(data) });
+  if (url.includes('/ai/assistants') && method === 'POST') {
+    return Promise.resolve(ok({ id: 'assistant-mock-0001', name: 'Mock Agent' }));
+  }
+  if (url.includes('/phone_numbers/search')) {
+    return Promise.resolve(ok({ data: [{ phone_number: '+17175550100' }, { phone_number: '+17175550101' }] }));
+  }
+  if (url.includes('/phone_numbers') && method === 'POST') {
+    return Promise.resolve(ok({ data: { id: 'phone-mock-0001', phone_number: '+17175550100' } }));
+  }
+  if (url.includes('/phone_numbers?filter')) {
+    return Promise.resolve(ok({ data: [{ id: 'phone-mock-0001', phone_number: '+17175550100' }] }));
+  }
+  return Promise.resolve(ok({ data: [] }));
+}
+
+async function provisionRecord(rec, { mockTelnyx = false } = {}) {
+  // Only provision products the watcher identified, and only once the
+  // record is written. A failed provisioning step leaves the record
+  // pending with the failure recorded, so the next run retries it.
+  if (!rec.product || rec.status === 'unknown-product' || rec.kind === 'setup-fee') return rec;
+  try {
+    // With --mock-telnyx the Telnyx calls go to the canned mock, so a real
+    // API key is not needed; pass a dummy one so the agent step runs.
+    await provisioning.provisionCharge(rec, mockTelnyx ? { fetchFn: mockTelnyxFetch, telnyxApiKey: 'mock-key' } : {});
+  } catch (e) {
+    rec.provisioning = rec.provisioning || { steps: {}, done: false };
+    rec.provisioning.error = e.message;
+    log(`provisioning failed for ${rec.charge_id}: ${e.message}`);
+  }
+  return rec;
+}
+
 // --- charge processing ---
 
 async function processCharge(key, charge, summary) {
@@ -407,6 +459,7 @@ async function processCharge(key, charge, summary) {
   let founding = null;
   if (identified.product === 'Social Front Desk') founding = await checkFounding(key, charge);
   const rec = buildRecord(charge, buyer, identified, founding);
+  await provisionRecord(rec);
   if (rec.status !== 'setup-fee-folded') writeRecord(rec);
   const entry = {
     charge_id: charge.id,
@@ -443,11 +496,16 @@ async function fetchNewCharges(key, watermark) {
   return out;
 }
 
-function processFixtureCharge(charge, buyer, summary) {
+async function processFixtureCharge(charge, buyer, summary, opts = {}) {
   const identified = charge.price_id && PRICE_MAP[charge.price_id]
     ? { priceId: charge.price_id, product: PRICE_MAP[charge.price_id].name, kind: PRICE_MAP[charge.price_id].kind, label: PRICE_MAP[charge.price_id].label }
     : { priceId: charge.price_id || null, product: null, kind: null, label: null };
   const rec = buildRecord(charge, buyer, identified, null);
+  // Provisioning runs in the live watcher and in fixture runs that pass
+  // --mock-telnyx (which exercises the full flow against a canned Telnyx).
+  // Plain fixture runs only write records, as before, so the existing
+  // record-writing tests stay deterministic and offline.
+  if (opts.mockTelnyx) await provisionRecord(rec, opts);
   if (rec.status !== 'setup-fee-folded') writeRecord(rec);
   summary.processed.push({
     charge_id: charge.id,
@@ -489,7 +547,7 @@ function cmdCheck() {
   return 0;
 }
 
-async function cmdRun(fixturePath, commitWatermark) {
+async function cmdRun(fixturePath, commitWatermark, mockTelnyx = false) {
   const watermark = readWatermark();
   const summary = {
     run_at: new Date().toISOString(),
@@ -524,7 +582,7 @@ async function cmdRun(fixturePath, commitWatermark) {
       ch.status = ch.status || 'succeeded';
       ch.refunded = ch.refunded || false;
       try {
-        processFixtureCharge(ch, buyer, summary);
+        await processFixtureCharge(ch, buyer, summary, { mockTelnyx });
       } catch (e) {
         summary.failed.push({ charge_id: ch.id, error: e.message });
       }
@@ -593,7 +651,7 @@ async function main(argv) {
     return 0;
   }
   const fixture = arg('--fixture', argv);
-  if (fixture !== null) return cmdRun(fixture, argv.includes('--commit-watermark'));
+  if (fixture !== null) return cmdRun(fixture, argv.includes('--commit-watermark'), argv.includes('--mock-telnyx'));
   return cmdRun(null, false);
 }
 

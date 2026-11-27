@@ -12,7 +12,7 @@
     "start": "node server.js",
     "seed": "node scripts/seed.js",
     "manage": "node scripts/manage.js",
-    "test": "node --test tests/smoke.test.js tests/purchase-fulfillment.test.js tests/telnyx-sync.test.js tests/telnyx-transcript.test.js tests/telnyx-agent-settings.test.js tests/client-profile.test.js tests/notifications.test.js tests/concurrency.test.js",
+    "test": "node --test tests/smoke.test.js tests/purchase-fulfillment.test.js tests/telnyx-sync.test.js tests/telnyx-transcript.test.js tests/telnyx-agent-settings.test.js tests/client-profile.test.js tests/notifications.test.js tests/concurrency.test.js tests/provisioning.test.js tests/inbox.test.js",
     "fulfill": "node scripts/purchase-fulfillment.js"
   }
 }

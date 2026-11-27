@@ -13,6 +13,7 @@ const agentSettings = require('./telnyx-agent-settings');
 const transcript = require('./telnyx-transcript');
 const profile = require('./client-profile');
 const notifications = require('./notifications');
+const inbox = require('./inbox');
 const fs = require('node:fs');
 
 // Brute-force protection (per IP and per email).
@@ -169,16 +170,17 @@ async function handleWeb(req, res, url) {
   }
 
   // --- Dashboard (requires a session) ---
-  if (method === 'GET' && (pathname === '/dashboard' || pathname === '/settings' || pathname === '/billing' || pathname === '/app/data')) {
+  if (method === 'GET' && (pathname === '/dashboard' || pathname === '/settings' || pathname === '/billing' || pathname === '/inbox' || pathname === '/app/data')) {
     const me = currentUser(req);
     if (!me) {
       if (pathname === '/app/data') return h.json(res, 401, { error: 'Not signed in' });
       return h.redirect(res, '/login');
     }
-    // Client-only pages: Settings (AI Agent settings and text call summaries)
-    // and Billing (subscriptions, next payment, card, invoices). AE staff have
-    // neither, so they go back to their admin view.
-    if (pathname === '/settings' || pathname === '/billing') {
+    // Client-only pages: Settings (AI Agent settings and text call summaries),
+    // Billing (subscriptions, next payment, card, invoices) and Inbox (every
+    // conversation in one place). AE staff have none of these, so they go
+    // back to their admin view.
+    if (pathname === '/settings' || pathname === '/billing' || pathname === '/inbox') {
       if (isAdmin(me) || !me.client) return h.redirect(res, '/dashboard');
       return h.html(res, 200, views.dashboardPage({ businessName: me.client.business_name, csrf: h.ensureCsrf(req, res), page: pathname.slice(1) }));
     }
@@ -511,6 +513,43 @@ async function handleWeb(req, res, url) {
     res.writeHead(200);
     res.end(buf);
     return;
+  }
+
+  // --- Unified inbox (client accounts; JSON, GET) ---
+  // GET /app/inbox lists every conversation (call, sms, social) with its
+  // last message, status and unread count. GET /app/inbox/{id} returns one
+  // conversation with its messages and marks it read. POST
+  // /app/inbox/{id}/resolve marks it resolved (or reopens it with
+  // {status: "open"}). The client id comes from the session, never the
+  // request, so a client can only ever see their own conversations.
+  if (pathname === '/app/inbox' && method === 'GET') {
+    const me = currentUser(req);
+    if (!me) return h.json(res, 401, { error: 'Not signed in' });
+    if (me.user.role !== 'client' || !me.client) return h.json(res, 403, { error: 'Not a client account' });
+    return h.json(res, 200, { ok: true, conversations: inbox.listConversations(me.client.id), unread: inbox.getUnreadCount(me.client.id) });
+  }
+
+  const inboxMatch = /^\/app\/inbox\/(conv_[0-9a-f]{16})$/.exec(pathname);
+  if (inboxMatch && method === 'GET') {
+    const me = currentUser(req);
+    if (!me) return h.json(res, 401, { error: 'Not signed in' });
+    if (me.user.role !== 'client' || !me.client) return h.json(res, 403, { error: 'Not a client account' });
+    const conv = inbox.getConversation(me.client.id, inboxMatch[1]);
+    if (!conv) return h.json(res, 404, { error: 'Conversation not found.' });
+    return h.json(res, 200, { ok: true, conversation: conv });
+  }
+
+  const inboxResolveMatch = /^\/app\/inbox\/(conv_[0-9a-f]{16})\/resolve$/.exec(pathname);
+  if (inboxResolveMatch && method === 'POST') {
+    const me = currentUser(req);
+    if (!me) return h.json(res, 401, { error: 'Not signed in' });
+    if (me.user.role !== 'client' || !me.client) return h.json(res, 403, { error: 'Not a client account' });
+    const body = await h.readBody(req, 16 * 1024);
+    if (!h.checkCsrf(req, body)) return h.json(res, 400, { error: 'Your session expired. Please refresh the page and try again.' });
+    const status = body.status === 'open' ? 'open' : 'resolved';
+    const updated = inbox.setConversationStatus(me.client.id, inboxResolveMatch[1], status);
+    if (!updated) return h.json(res, 404, { error: 'Conversation not found.' });
+    return h.json(res, 200, { ok: true, conversation: updated });
   }
 
   // --- Message AE support (client accounts; JSON from the dashboard, CSRF checked) ---

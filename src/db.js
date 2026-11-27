@@ -141,7 +141,7 @@ CREATE TABLE IF NOT EXISTS api_access_log (
 CREATE TABLE IF NOT EXISTS telnyx_agents (
   id                    INTEGER PRIMARY KEY AUTOINCREMENT,
   client_id             TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
-  service_slug          TEXT NOT NULL CHECK (service_slug IN ('front-desk', 'always-on-front-desk')),
+  service_slug          TEXT NOT NULL CHECK (service_slug IN ('front-desk', 'always-on-front-desk', 'social-front-desk')),
   telnyx_assistant_id   TEXT UNIQUE NOT NULL,
   telnyx_phone_number   TEXT UNIQUE NOT NULL,
   transfer_phone_number TEXT NOT NULL,
@@ -178,6 +178,45 @@ CREATE TABLE IF NOT EXISTS telnyx_webhook_events (
   event_type  TEXT NOT NULL,
   received_at TEXT NOT NULL
 );
+
+-- Unified inbox (Intercom parity): one conversation per contact per channel,
+-- with every message in it. Calls land here from call_summaries; SMS and
+-- social DMs land here when those channels are wired in. A conversation is
+-- grouped by (client, channel, contact_key): the caller's E.164 number for
+-- call/sms, the social handle for social. contact_display is masked on
+-- display, never a full number. status is open until the client marks the
+-- conversation resolved.
+CREATE TABLE IF NOT EXISTS inbox_conversations (
+  id                TEXT PRIMARY KEY,
+  client_id         TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  channel           TEXT NOT NULL CHECK (channel IN ('call','sms','social')),
+  contact_key       TEXT NOT NULL,
+  contact_display   TEXT NOT NULL,
+  last_message_at   TEXT NOT NULL,
+  last_message_text TEXT,
+  status            TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open','resolved')),
+  unread_count      INTEGER NOT NULL DEFAULT 0,
+  created_at        TEXT NOT NULL,
+  updated_at        TEXT NOT NULL,
+  UNIQUE (client_id, channel, contact_key)
+);
+CREATE INDEX IF NOT EXISTS idx_inbox_conversations_client_time ON inbox_conversations (client_id, last_message_at DESC);
+CREATE INDEX IF NOT EXISTS idx_inbox_conversations_client_status ON inbox_conversations (client_id, status, last_message_at DESC);
+
+CREATE TABLE IF NOT EXISTS inbox_messages (
+  id              TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL REFERENCES inbox_conversations(id) ON DELETE CASCADE,
+  client_id       TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+  channel         TEXT NOT NULL CHECK (channel IN ('call','sms','social')),
+  direction       TEXT NOT NULL CHECK (direction IN ('inbound','outbound')),
+  body            TEXT NOT NULL,
+  occurred_at     TEXT NOT NULL,
+  source_id       TEXT,                                -- telnyx_conversation_id for calls; message id for sms/social
+  metadata        TEXT,                                -- JSON: outcome, duration, transcript flag, recording flag
+  created_at      TEXT NOT NULL,
+  UNIQUE (client_id, channel, source_id)
+);
+CREATE INDEX IF NOT EXISTS idx_inbox_messages_conversation_time ON inbox_messages (conversation_id, occurred_at DESC);
 
 -- Billing view: the card on file, last 4 digits ONLY. There is no Stripe client in
 -- this app; AE staff record this with scripts/manage.js set-card. The CHECK makes it
@@ -315,6 +354,41 @@ CREATE TABLE IF NOT EXISTS client_notification_settings (
   const cols = new Set(db.prepare('PRAGMA table_info(telnyx_agents)').all().map((c) => c.name));
   for (const col of ['name', 'model', 'tools_json', 'instructions_hash', 'last_synced_at']) {
     if (!cols.has(col)) db.exec(`ALTER TABLE telnyx_agents ADD COLUMN ${col} TEXT`);
+  }
+}
+// Social Front Desk agents need a telnyx_agents row too. SQLite cannot ALTER
+// a CHECK constraint, so an older table (front-desk / always-on only) is
+// rebuilt with the wider constraint, preserving every row.
+{
+  const row = db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'telnyx_agents'").get();
+  if (row && row.sql && !row.sql.includes('social-front-desk')) {
+    db.exec(`
+      PRAGMA foreign_keys = OFF;
+      CREATE TABLE telnyx_agents_new (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        client_id             TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        service_slug          TEXT NOT NULL CHECK (service_slug IN ('front-desk', 'always-on-front-desk', 'social-front-desk')),
+        telnyx_assistant_id   TEXT UNIQUE NOT NULL,
+        telnyx_phone_number   TEXT UNIQUE NOT NULL,
+        transfer_phone_number TEXT NOT NULL,
+        tier_call_limit       INTEGER NOT NULL DEFAULT 60,
+        status                TEXT NOT NULL DEFAULT 'provisioning',
+        created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at            TEXT NOT NULL DEFAULT (datetime('now')),
+        name                  TEXT,
+        model                 TEXT,
+        tools_json            TEXT,
+        instructions_hash     TEXT,
+        last_synced_at        TEXT
+      );
+      INSERT INTO telnyx_agents_new (id, client_id, service_slug, telnyx_assistant_id, telnyx_phone_number, transfer_phone_number, tier_call_limit, status, created_at, updated_at, name, model, tools_json, instructions_hash, last_synced_at)
+        SELECT id, client_id, service_slug, telnyx_assistant_id, telnyx_phone_number, transfer_phone_number, tier_call_limit, status, created_at, updated_at, name, model, tools_json, instructions_hash, last_synced_at FROM telnyx_agents;
+      DROP TABLE telnyx_agents;
+      ALTER TABLE telnyx_agents_new RENAME TO telnyx_agents;
+      CREATE INDEX IF NOT EXISTS idx_telnyx_agents_phone ON telnyx_agents (telnyx_phone_number);
+      CREATE INDEX IF NOT EXISTS idx_telnyx_agents_assistant ON telnyx_agents (telnyx_assistant_id);
+      PRAGMA foreign_keys = ON;
+    `);
   }
 }
 // Agent settings: voice, voice speed and transfer number are now editable in

@@ -16,6 +16,18 @@ function createClient({ businessName, contactName, email, phone }) {
   return id;
 }
 
+/** Find a client by email (case-insensitive). Used by auto-provisioning to recover when a run created the client but crashed before recording the id. */
+function getClientByEmail(email) {
+  if (!email) return null;
+  return db.prepare('SELECT * FROM clients WHERE lower(email) = lower(?) ORDER BY created_at DESC LIMIT 1').get(email) || null;
+}
+
+/** Find a user by email (case-insensitive). Used by auto-provisioning when the same buyer purchases a second product: the login is reused, not duplicated. */
+function getUserByEmail(email) {
+  if (!email) return null;
+  return db.prepare('SELECT * FROM users WHERE lower(email) = lower(?) LIMIT 1').get(email) || null;
+}
+
 async function createUser({ clientId, email, password, role, tempPassword = false }) {
   const id = newId('usr');
   const hash = await hashPassword(password);
@@ -323,7 +335,7 @@ function listClientsOverview() {
 
 // ---- Telnyx agent mapping (used by scripts/manage.js add-telnyx-agent) ----------
 function addTelnyxAgent({ clientId, service, assistantId, phone, transferPhone, callLimit }) {
-  if (!['front-desk', 'always-on-front-desk'].includes(service)) throw new Error('service must be front-desk or always-on-front-desk');
+  if (!['front-desk', 'always-on-front-desk', 'social-front-desk'].includes(service)) throw new Error('service must be front-desk, always-on-front-desk, or social-front-desk');
   if (!/^\+\d{8,15}$/.test(String(phone || ''))) throw new Error('phone must be E.164, for example +17175550100');
   if (!/^\+\d{8,15}$/.test(String(transferPhone || ''))) throw new Error('transfer phone must be E.164');
   const r = db.prepare(`INSERT INTO telnyx_agents (client_id, service_slug, telnyx_assistant_id, telnyx_phone_number, transfer_phone_number, tier_call_limit)
@@ -598,7 +610,7 @@ function getClientSendingNumber(clientId) {
 
 module.exports = {
   AE_OWNER_EMAIL, isAeOwner, getTelnyxBalance,
-  createClient, createUser, setPassword, passwordExpired, listOnboardingPending, recordOnboardingReminder,
+  createClient, getClientByEmail, createUser, getUserByEmail, setPassword, passwordExpired, listOnboardingPending, recordOnboardingReminder,
   addSubscription, setServiceStatus, createApiKey, revokeApiKey,
   addEvent, addEventInTx, listServiceCards, listActivity, hasSubscription, nowIso,
   getBilling, setCard, addInvoice, updateSubscription,

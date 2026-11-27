@@ -4,12 +4,13 @@
 (function () {
   'use strict';
   var app = document.getElementById('app');
-  // Three pages share this script (src/views.js dashboardPage). 'settings'
+  // Four pages share this script (src/views.js dashboardPage). 'settings'
   // holds the AI Agent settings and the text call summaries; 'billing' holds
-  // the read-only billing view; 'dashboard' holds everything else. Every
-  // section is still built the same way; a page only attaches its own
-  // sections and loads only what they need.
-  var PAGE = ({ settings: 1, billing: 1 })[app.getAttribute('data-page')] ? app.getAttribute('data-page') : 'dashboard';
+  // the read-only billing view; 'inbox' holds every conversation in one
+  // place; 'dashboard' holds everything else. Every section is still built
+  // the same way; a page only attaches its own sections and loads only what
+  // they need.
+  var PAGE = ({ settings: 1, billing: 1, inbox: 1 })[app.getAttribute('data-page')] ? app.getAttribute('data-page') : 'dashboard';
 
   /** el('div', {class: 'x'}, child, 'text') */
   function el(tag, attrs) {
@@ -227,6 +228,155 @@
   /** Billing page: the same read-only billing block, on its own page. */
   function renderBillingPage(data) {
     live.replaceChildren(el('h1', {}, 'Billing'), renderBilling(data.billing) || el('div', {}));
+  }
+
+  /** Unified inbox: every conversation (call, sms, social) in one place.
+   * The list shows one row per contact with the last message, the channel
+   * and the unread count. Clicking a row opens the messages and marks the
+   * conversation read. Call messages link to the full call detail
+   * (transcript + recording) through the existing call modal. */
+  var inboxListEl = null;
+  var inboxDetailEl = null;
+  var inboxStatusEl = null;
+  var inboxConversations = [];
+
+  function channelLabel(channel) {
+    return channel === 'call' ? 'Call' : channel === 'sms' ? 'Text' : channel === 'social' ? 'Social' : channel;
+  }
+
+  function renderInboxList() {
+    if (!inboxConversations.length) {
+      return el('div', { class: 'glass empty' }, 'No conversations yet. When someone calls, texts or messages you, it will show up here.');
+    }
+    return el.apply(null, ['ol', { class: 'glass feed inbox__list' }].concat(inboxConversations.map(function (c) {
+      var row = el('li', { class: 'inbox__row' + (c.unread_count ? ' inbox__row--unread' : '') },
+        el('div', { class: 'feed__meta' },
+          el('span', {}, formatWhen(c.last_message_at)),
+          el('span', { class: 'tag' }, channelLabel(c.channel)),
+          c.status === 'resolved' ? el('span', { class: 'tag' }, 'Resolved') : null,
+          c.unread_count ? el('span', { class: 'tag inbox__unread' }, c.unread_count + ' new') : null),
+        el('div', {},
+          el('p', { class: 'feed__title' }, c.contact_display),
+          c.last_message_text ? el('p', { class: 'feed__detail' }, c.last_message_text) : null));
+      row.addEventListener('click', function () { openConversation(c.id, row); });
+      row.setAttribute('tabindex', '0');
+      row.setAttribute('role', 'button');
+      row.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openConversation(c.id, row); }
+      });
+      return row;
+    })));
+  }
+
+  function renderConversationDetail(conv) {
+    var head = el('div', { class: 'inbox__detail-head' },
+      el('div', {},
+        el('h2', {}, conv.contact_display),
+        el('p', { class: 'card__update muted' }, channelLabel(conv.channel) + ' · ' +
+          (conv.status === 'resolved' ? 'Resolved' : 'Open') + ' · ' + conv.messages.length + ' message' + (conv.messages.length === 1 ? '' : 's'))),
+      el('button', { class: 'btn btn--ghost', type: 'button' },
+        conv.status === 'resolved' ? 'Reopen' : 'Mark resolved'));
+    var resolveBtn = head.querySelector('button');
+    resolveBtn.addEventListener('click', function () {
+      var next = conv.status === 'resolved' ? 'open' : 'resolved';
+      resolveBtn.disabled = true;
+      fetch('/app/inbox/' + encodeURIComponent(conv.id) + '/resolve', {
+        method: 'POST', credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: '_csrf=' + encodeURIComponent(csrfToken()) + '&status=' + next,
+      })
+        .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+        .then(function (res) {
+          if (!res.ok) throw new Error((res.data && res.data.error) || 'We could not update that conversation.');
+          loadInbox();
+          inboxDetailEl.replaceChildren(el('p', { class: 'muted' }, 'Conversation ' + (next === 'resolved' ? 'marked resolved.' : 'reopened.')));
+        })
+        .catch(function (err) {
+          inboxStatusEl.textContent = err.message || 'We could not update that conversation.';
+          resolveBtn.disabled = false;
+        });
+    });
+    var back = el('button', { class: 'btn btn--ghost', type: 'button' }, 'Back to conversations');
+    back.addEventListener('click', function () {
+      inboxDetailEl.replaceChildren();
+      inboxDetailEl.hidden = true;
+      inboxListEl.hidden = false;
+      loadInbox();
+    });
+    var msgs = conv.messages.length
+      ? el.apply(null, ['ol', { class: 'glass feed inbox__messages' }].concat(conv.messages.map(function (m) {
+          var meta = m.metadata || {};
+          var tag = channelLabel(m.channel) + (meta.outcome ? ' · ' + label(meta.outcome) : '') +
+            (meta.duration_secs ? ' · ' + Math.round(meta.duration_secs / 60) + ' min' : '');
+          var openBtn = (m.channel === 'call' && m.source_id)
+            ? (function () {
+                var b = el('button', { class: 'btn btn--ghost', type: 'button' },
+                  meta.has_transcript ? 'View transcript' : 'View call');
+                b.addEventListener('click', function () { openCallDetail(m.source_id, b); });
+                return b;
+              })()
+            : null;
+          return el('li', {},
+            el('div', { class: 'feed__meta' }, el('span', {}, formatWhen(m.occurred_at)), el('span', { class: 'tag' }, tag)),
+            el('div', {}, el('p', { class: 'feed__detail' }, m.body)),
+            openBtn);
+        })))
+      : el('p', { class: 'muted' }, 'No messages in this conversation yet.');
+    return el('div', {}, back, head, msgs);
+  }
+
+  function openConversation(convId, opener) {
+    if (!inboxDetailEl) return;
+    inboxListEl.hidden = true;
+    inboxDetailEl.hidden = false;
+    inboxDetailEl.replaceChildren(el('p', { class: 'muted' }, 'Loading the conversation…'));
+    fetch('/app/inbox/' + encodeURIComponent(convId), { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+      .then(function (r) {
+        if (r.status === 401) { location.href = '/login'; return null; }
+        return r.json().then(function (d) { return { ok: r.ok, data: d }; });
+      })
+      .then(function (res) {
+        if (!res) return;
+        if (!res.ok) throw new Error((res.data && res.data.error) || 'We could not open that conversation.');
+        inboxDetailEl.replaceChildren(renderConversationDetail(res.data.conversation));
+        loadInbox();
+      })
+      .catch(function (err) {
+        inboxDetailEl.replaceChildren(el('p', { class: 'error', role: 'alert' }, err.message || 'We could not open that conversation.'));
+      });
+  }
+
+  function loadInbox() {
+    if (!inboxListEl) return;
+    fetch('/app/inbox', { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+      .then(function (r) {
+        if (r.status === 401) { location.href = '/login'; return null; }
+        return r.json().then(function (d) { return { ok: r.ok, data: d }; });
+      })
+      .then(function (res) {
+        if (!res) return;
+        if (!res.ok) throw new Error((res.data && res.data.error) || 'We could not load your inbox.');
+        inboxConversations = res.data.conversations || [];
+        var unread = res.data.unread || 0;
+        inboxListEl.replaceChildren(
+          unread ? el('p', { class: 'card__update' }, unread + ' unread message' + (unread === 1 ? '' : 's')) : null,
+          renderInboxList());
+      })
+      .catch(function (err) {
+        inboxListEl.replaceChildren(el('p', { class: 'error', role: 'alert' }, err.message || 'We could not load your inbox.'));
+      });
+  }
+
+  function renderInboxPage() {
+    inboxStatusEl = el('p', { class: 'muted small', role: 'status', 'aria-live': 'polite' }, '');
+    inboxListEl = el('div', {});
+    inboxDetailEl = el('div', {});
+    inboxDetailEl.hidden = true;
+    live.replaceChildren(
+      el('h1', {}, 'Inbox'),
+      el('p', { class: 'muted' }, 'Every conversation with your customers in one place: calls, texts and social messages.'),
+      inboxStatusEl, inboxListEl, inboxDetailEl);
+    loadInbox();
   }
 
   function csrfToken() {
@@ -853,6 +1003,7 @@
   }
 
   function load() {
+    if (PAGE === 'inbox') { renderInboxPage(); return; }
     fetch('/app/data', { credentials: 'same-origin', headers: { Accept: 'application/json' } })
       .then(function (r) {
         if (r.status === 401) { location.href = '/login'; return null; }
@@ -923,6 +1074,11 @@
   } else if (PAGE === 'billing') {
     app.replaceChildren(live);
     live.replaceChildren(el('p', { class: 'muted', id: 'loading' }, 'Loading your billing details…'));
+  } else if (PAGE === 'inbox') {
+    // The inbox links call messages to the full call detail (transcript +
+    // recording), so the call modal section rides along on this page too.
+    app.replaceChildren(live, renderCallDetailSection());
+    live.replaceChildren(el('p', { class: 'muted', id: 'loading' }, 'Loading your inbox…'));
   } else {
     app.replaceChildren(live, renderProfile(), renderSupport(), renderCallDetailSection());
     live.replaceChildren(el('p', { class: 'muted', id: 'loading' }, 'Loading your dashboard…'));
