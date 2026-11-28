@@ -375,3 +375,44 @@ test('client can message AE support; admin sees it and marks it handled', async 
   assert.match(after, /Handled Nov|Handled [A-Z][a-z]{2} \d/);
   assert.ok(!after.includes(`/admin/support/${id}/handled`));
 });
+
+test('Client | Internal toggle renders on every signed-in page; Client mode is unchanged', async () => {
+  const { session } = await login(demo.email, 'a-brand-new-pass');
+  const admin = await login('staff@example.com', 'staff-password-123');
+  const get = async (p, s) => (await fetch(`${base}${p}`, { headers: { cookie: `ae_session=${s}` } })).text();
+  for (const p of ['/dashboard', '/inbox', '/settings', '/billing']) {
+    const html = await get(p, session);
+    assert.match(html, /class="modeswitch" role="group" aria-label="Portal mode"/, `${p} has no toggle`);
+    assert.match(html, /data-mode="client" aria-pressed="true">Client</);          // Client is the default
+    assert.match(html, /data-mode="internal" aria-pressed="false">Internal</);
+    assert.ok(html.includes('data-internal-base="https://anthony-macbookpro14-1.taild6c356.ts.net:8446"'));
+    // Client wiring is exactly as before: same nav, same app script, loaded before the toggle script.
+    for (const href of ['/dashboard', '/inbox', '/settings', '/billing']) assert.ok(html.includes(`href="${href}"`));
+    assert.ok(html.indexOf('/static/app.js') > -1 && html.indexOf('/static/app.js') < html.indexOf('/static/internal.js'));
+  }
+  const adminHtml = await get('/dashboard', admin.session);
+  assert.match(adminHtml, /class="modeswitch"/);                                       // staff page too
+  assert.ok(adminHtml.includes('/static/internal.js'));
+  // Sign-in pages are not part of the portal shell: no toggle, no internal script.
+  const loginHtml = await (await fetch(`${base}/login`)).text();
+  assert.ok(!loginHtml.includes('modeswitch') && !loginHtml.includes('internal.js'));
+  // Client data path unchanged.
+  const data = await fetch(`${base}/app/data`, { headers: { cookie: `ae_session=${session}` } });
+  assert.equal(data.status, 200);
+});
+
+test('Internal mode is browser-only: static module served, CSP allows only the MBP origin, no new server routes', async () => {
+  const js = await fetch(`${base}/static/internal.js`);
+  assert.equal(js.status, 200);
+  assert.match(js.headers.get('content-type'), /javascript/);
+  const csp = js.headers.get('content-security-policy');
+  assert.ok(csp.includes("connect-src 'self' https://anthony-macbookpro14-1.taild6c356.ts.net:8446;"), csp);
+  assert.ok(csp.includes("default-src 'self'") && csp.includes("script-src 'self'"));
+  const src = await js.text();
+  assert.ok(!/localStorage\.setItem\(\s*KEY_NAME/.test(src) && /store\('sessionStorage'\)/.test(src), 'agent key must use sessionStorage only');
+  assert.ok(!src.includes('/api/v1/'), 'Internal mode must not touch client API routes');
+  for (const p of ['/internal', '/api/internal', '/api/goals', '/api/outreach', '/api/gifts']) {
+    const status = (await fetch(`${base}${p}`, { redirect: 'manual' })).status;
+    assert.ok([303, 401, 404].includes(status), `${p} should not serve internal data (got ${status})`);
+  }
+});

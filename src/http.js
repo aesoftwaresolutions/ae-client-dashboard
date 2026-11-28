@@ -35,7 +35,7 @@ const CSRF_COOKIE = config.isProd ? '__Host-ae_csrf' : 'ae_csrf';
 
 function securityHeaders(res) {
   res.setHeader('Content-Security-Policy',
-    "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; frame-ancestors 'none'; form-action 'self'; base-uri 'none'");
+    `default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ${config.internalApiBase}; frame-ancestors 'none'; form-action 'self'; base-uri 'none'`);
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'same-origin');
@@ -85,8 +85,8 @@ function checkCsrf(req, body) {
   return !!cookie && typeof body._csrf === 'string' && safeEqual(cookie, body._csrf);
 }
 
-// ---- Static files (only the two public assets) ----
-const STATIC = { '/static/style.css': 'text/css; charset=utf-8', '/static/app.js': 'text/javascript; charset=utf-8' };
+// ---- Static files (only the public assets) ----
+const STATIC = { '/static/style.css': 'text/css; charset=utf-8', '/static/app.js': 'text/javascript; charset=utf-8', '/static/internal.js': 'text/javascript; charset=utf-8' };
 function serveStatic(res, pathname) {
   const type = STATIC[pathname];
   if (!type) return false;

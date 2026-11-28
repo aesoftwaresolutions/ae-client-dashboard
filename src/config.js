@@ -71,6 +71,10 @@ module.exports = {
   // Secret for POST /api/v1/admin/telnyx-sync (the cron trigger). When empty that route is 404.
   telnyxSyncSecret: env.TELNYX_SYNC_SECRET || '',
   telnyxSyncMinIntervalSec: 300, // a sync within this many seconds of the last one is skipped
+  // Internal mode (Client | Internal toggle). The internal data lives on the AE MacBook
+  // and is fetched by the viewer's browser over the tailnet; this server never proxies it.
+  // The base URL is also allowed in the CSP connect-src (src/http.js).
+  internalApiBase: 'https://anthony-macbookpro14-1.taild6c356.ts.net:8446',
   // Optional: where to send a notice when a client posts a support message.
   // When empty, messages are only stored and shown in the admin view.
   supportNotifyEmail: env.SUPPORT_NOTIFY_EMAIL || '',

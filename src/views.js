@@ -2,9 +2,11 @@
 // Server-rendered HTML pages. Everything user-supplied goes through esc().
 const { LOGO_MARK, FAVICON_16, FAVICON_32, APPLE_TOUCH } = require('./brand');
 const { maskPhones } = require('./security');
+const config = require('./config');
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 function layout(title, body, { script } = {}) {
+  const scripts = [].concat(script || []);
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -19,7 +21,7 @@ function layout(title, body, { script } = {}) {
 </head>
 <body>
 ${body}
-${script ? `<script src="${script}" defer></script>` : ''}
+${scripts.map((s) => `<script src="${s}" defer></script>`).join('\n')}
 </body>
 </html>`;
 }
@@ -85,10 +87,20 @@ function clientNav(active) {
   return `<nav class="topbar__nav" aria-label="Dashboard pages">${link('/dashboard', 'Dashboard', 'dashboard')}${link('/inbox', 'Inbox', 'inbox')}${link('/settings', 'Settings', 'settings')}${link('/billing', 'Billing', 'billing')}</nav>`;
 }
 
+// Client | Internal mode switch. The mode lives in the browser (localStorage, default Client);
+// /static/internal.js wires it up. The server renders Client as the pressed default.
+function modeSwitch() {
+  return `<div class="modeswitch" role="group" aria-label="Portal mode" data-internal-base="${esc(config.internalApiBase)}">
+    <button type="button" class="modeswitch__btn" data-mode="client" aria-pressed="true">Client</button>
+    <button type="button" class="modeswitch__btn" data-mode="internal" aria-pressed="false">Internal</button>
+  </div>`;
+}
+
 function header(name, csrf, active) {
   return `<header class="topbar">
   <div class="topbar__brand"><img src="${LOGO_MARK}" alt="AE Software Solutions" class="topbar__logo" width="30" height="30"><span class="brand">AE Software Solutions</span><span class="topbar__name">${esc(name)}</span></div>
   ${active ? clientNav(active) : ''}
+  ${modeSwitch()}
   <form method="post" action="/logout">${csrfField(csrf)}<button class="btn btn--ghost" type="submit">Sign out</button></form>
 </header>`;
 }
@@ -105,7 +117,7 @@ function dashboardPage({ businessName, csrf, page = 'dashboard' }) {
 <main class="wrap" id="app" data-page="${key}" aria-live="polite">
   <noscript><p class="notice">Please turn on JavaScript to see your ${word}.</p></noscript>
   <p class="muted" id="loading">Loading your ${word}…</p>
-</main>`, { script: '/static/app.js' });
+</main>`, { script: ['/static/app.js', '/static/internal.js'] });
 }
 
 // Dates for staff pages, written out ("Nov 22, 2026, 1:48 AM") so no ISO dashes show.
@@ -215,7 +227,7 @@ function adminPage({ email, csrf, clients = [], messages = [], fulfillments = []
   ${telnyxSection}
   <h2>Support messages${open ? ` (${open} open)` : ''}</h2>
   ${messageRows}
-</main>`);
+</main>`, { script: '/static/internal.js' });
 }
 
 module.exports = { loginPage, forgotPage, resetPage, messagePage, dashboardPage, adminPage };
