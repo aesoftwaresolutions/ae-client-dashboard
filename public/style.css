@@ -215,6 +215,7 @@ code { background: var(--glass-strong); padding: 0.1em 0.4em; border-radius: 6px
 .support__box { margin-top: 2.2rem; }
 .support__title { margin-top: 0; }
 .support { margin-top: 1rem; max-width: 640px; }
+#agent-settings[hidden] { display: none; }
 
 /* ---- Admin view (AE staff) ---- */
 .admin__services { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.45rem; border-top: 1px solid var(--line); padding-top: 0.6rem; }
@@ -227,6 +228,7 @@ code { background: var(--glass-strong); padding: 0.1em 0.4em; border-radius: 6px
 .form__row label { flex: 1; min-width: 0; }
 @media (max-width: 560px) { .form__row { flex-direction: column; gap: 1rem; } }
 .profile__logo { display: block; max-width: 180px; max-height: 180px; object-fit: contain; border: 1px solid var(--line); border-radius: 10px; background: var(--glass-strong); margin-bottom: 0.75rem; }
+.profile__logo[hidden] { display: none; }
 .admin__logo { width: 48px; height: 48px; object-fit: contain; border: 1px solid var(--line); border-radius: 8px; background: var(--glass-strong); margin-bottom: 0.5rem; }
 
 /* ---- Call detail modal (glass card popup) ---- */

@@ -461,7 +461,7 @@
     });
 
     // Logo: a preview when one exists, a file picker, and upload / remove.
-    profileLogoImg = el('img', { class: 'profile__logo', alt: 'Your business logo', style: 'display: none' });
+    profileLogoImg = el('img', { class: 'profile__logo', alt: 'Your business logo', hidden: 'hidden' });
     profileLogoNote = el('p', { class: 'muted small' }, 'No logo yet. Upload a PNG, JPG, WebP or GIF under 2 MB.');
     profileLogoInput = el('input', { type: 'file', name: 'logo', accept: 'image/png,image/jpeg,image/webp,image/gif' });
     profileLogoStatus = el('p', { class: 'muted small', role: 'status', 'aria-live': 'polite' }, '');
@@ -540,10 +540,10 @@
     Object.keys(profileFields).forEach(function (k) { profileFields[k].value = p[k] || ''; });
     if (p.has_logo && p.logo_url) {
       profileLogoImg.src = p.logo_url + (p.updated_at ? '?v=' + encodeURIComponent(p.updated_at) : '');
-      profileLogoImg.style.display = '';
+      profileLogoImg.hidden = false;
       profileLogoNote.textContent = 'Your current logo. Upload a new one to replace it.';
     } else {
-      profileLogoImg.style.display = 'none';
+      profileLogoImg.hidden = true;
       profileLogoImg.removeAttribute('src');
       profileLogoNote.textContent = 'No logo yet. Upload a PNG, JPG, WebP or GIF under 2 MB.';
     }
@@ -698,7 +698,7 @@
         })
         .then(function () { save.disabled = false; });
     });
-    var section = el('section', { class: 'glass pad support__box', 'aria-labelledby': 'agent-title', style: 'display: none' },
+    var section = el('section', { class: 'glass pad support__box', 'aria-labelledby': 'agent-title', hidden: 'hidden' },
       el('h2', { id: 'agent-title', class: 'support__title' }, 'Your AI receptionist'),
       el('p', { class: 'muted' }, 'This is the agent that answers your calls. Change the details below and it will answer in your business\u2019s voice.'),
       agentForm);
@@ -736,7 +736,7 @@
   function populateAgentSettings(data) {
     var section = document.getElementById('agent-settings');
     if (!section || !data.telnyx_agent) return;
-    section.style.display = '';
+    section.hidden = false;
     if (agentPopulated || agentDirty) return;
     if (data.agent_settings) {
       // Saved settings exist: fill the form, and fetch the voice list so the
